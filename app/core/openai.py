@@ -67,7 +67,7 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
 
         # 输出原始请求体用于调试
         request_dict = request.model_dump()
-        logger.debug(f"🔄 原始 OpenAI 请求体: {json.dumps(request_dict, ensure_ascii=False, indent=2)}")
+        # logger.debug(f"🔄 原始 OpenAI 请求体: {json.dumps(request_dict, ensure_ascii=False, indent=2)}")
         
         # 使用新的转换器转换请求
         logger.info("🔄 开始转换请求格式: OpenAI -> Z.AI")
@@ -82,7 +82,7 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
             f"web_search: {transformed['body']['features']['web_search']}, "
             f"mcp_servers: {transformed['body'].get('mcp_servers', [])}"
         )
-        logger.debug(f"🔄 转换后 Z.AI 请求体: {json.dumps(transformed['body'], ensure_ascii=False, indent=2)}")
+        # logger.debug(f"🔄 转换后 Z.AI 请求体: {json.dumps(transformed['body'], ensure_ascii=False, indent=2)}")
 
         # 调用上游API
         async def stream_response():
