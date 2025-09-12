@@ -13,7 +13,7 @@ from granian import Granian
 
 
 # Setup logger
-logger = setup_logger(log_dir="logs", debug_mode=settings.DEBUG_LOGGING)
+logger = setup_logger(log_dir="logs", debug_mode=settings.DEBUG_LOGGING, function_call_debug=True)
 
 # Create FastAPI app
 app = FastAPI(
