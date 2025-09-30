@@ -4,7 +4,7 @@
 ![Python: 3.9-3.12](https://img.shields.io/badge/python-3.9--3.12-green.svg)
 ![FastAPI](https://img.shields.io/badge/framework-FastAPI-009688.svg)
 
-基于 FastAPI 的高性能 OpenAI API 兼容代理服务，采用多提供商架构设计，支持 GLM-4.5 系列、K2Think、LongCat 等多种 AI 模型的完整功能。
+基于 FastAPI 的高性能 OpenAI API 兼容代理服务，采用多提供商架构设计，支持 GLM-4.5/4.6 系列、K2Think、LongCat 等多种 AI 模型的完整功能。
 
 ## ✨ 核心特性
 
@@ -166,6 +166,8 @@ docker run -d \
 | `GLM-4.5-Thinking` | 0727-360B-API | 思考模型    | 显示推理过程，透明度高 |
 | `GLM-4.5-Search`   | 0727-360B-API | 搜索模型    | 实时网络搜索，信息更新 |
 | `GLM-4.5-Air`      | 0727-106B-API | 轻量模型    | 快速响应，高效推理     |
+| `GLM-4.6`          | 1226-360B-API | 最新标准模型 | 更强性能，改进推理能力 |
+| `GLM-4.6-Thinking` | 1226-360B-API | 最新思考模型 | 增强推理过程，更高透明度 |
 
 #### K2Think 提供商
 | 模型                    | 描述           | 特性                     |
