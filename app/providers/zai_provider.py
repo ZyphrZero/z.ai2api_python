@@ -48,8 +48,8 @@ class ZAIProvider(BaseProvider):
             settings.SEARCH_MODEL: "0727-360B-API",  # GLM-4.5-Search
             settings.AIR_MODEL: "0727-106B-API",  # GLM-4.5-Air
             # GLM-4.6 系列 (使用最新的 API ID)
-            settings.GLM46_MODEL: "0929-360B-API",  # GLM-4.6
-            settings.GLM46_THINKING_MODEL: "0929-360B-API",  # GLM-4.6-Thinking
+            settings.GLM46_MODEL: "GLM-4-6-API-V1",  # GLM-4.6
+            settings.GLM46_THINKING_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-Thinking
         }
     
     def get_supported_models(self) -> List[str]:
