@@ -143,11 +143,11 @@ class ZAIProvider(BaseProvider):
             settings.GLM45_THINKING_MODEL: "0727-360B-API",  # GLM-4.5-Thinking
             settings.GLM45_SEARCH_MODEL: "0727-360B-API",  # GLM-4.5-Search
             settings.GLM45_AIR_MODEL: "0727-106B-API",  # GLM-4.5-Air
-            settings.GLM45V_MODEL: "glm-4.5v",  # GLM-4.5V多模态
-            settings.GLM46_MODEL: "GLM-4-6-API-V1",  # GLM-4.6
-            settings.GLM46_THINKING_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-Thinking
-            settings.GLM46_SEARCH_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-Search
-            settings.GLM46_ADVANCED_SEARCH_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-advanced-search
+            settings.GLM46V_MODEL: "glm-4.6v",  # GLM-4.6V多模态
+            settings.GLM47_MODEL: "glm-4.7",  # GLM-4.7
+            settings.GLM47_THINKING_MODEL: "glm-4.7",  # GLM-4.7-Thinking
+            settings.GLM47_SEARCH_MODEL: "glm-4.7",  # GLM-4.7-Search
+            settings.GLM47_ADVANCED_SEARCH_MODEL: "glm-4.7",  # GLM-4.7-advanced-search
         }
     
     def get_supported_models(self) -> List[str]:
@@ -157,11 +157,11 @@ class ZAIProvider(BaseProvider):
             settings.GLM45_THINKING_MODEL,
             settings.GLM45_SEARCH_MODEL,
             settings.GLM45_AIR_MODEL,
-            settings.GLM45V_MODEL,
-            settings.GLM46_MODEL,
-            settings.GLM46_THINKING_MODEL,
-            settings.GLM46_SEARCH_MODEL,
-            settings.GLM46_ADVANCED_SEARCH_MODEL,
+            settings.GLM46V_MODEL,
+            settings.GLM47_MODEL,
+            settings.GLM47_THINKING_MODEL,
+            settings.GLM47_SEARCH_MODEL,
+            settings.GLM47_ADVANCED_SEARCH_MODEL,
         ]
 
     def _get_proxy_config(self) -> Optional[str]:
@@ -530,7 +530,7 @@ class ZAIProvider(BaseProvider):
         requested_model = request.model
         is_thinking = "-thinking" in requested_model.casefold()
         is_search = "-search" in requested_model.casefold()
-        is_advanced_search = requested_model == settings.GLM46_ADVANCED_SEARCH_MODEL
+        is_advanced_search = requested_model == settings.GLM47_ADVANCED_SEARCH_MODEL
         is_air = "-air" in requested_model.casefold()
 
         # 获取上游模型ID

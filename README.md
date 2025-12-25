@@ -126,11 +126,11 @@ logs/                  # 日志文件存储目录
 | `GLM-4.5-Thinking` | 0727-360B-API | 思考模型，显示推理过程 |
 | `GLM-4.5-Search` | 0727-360B-API | 搜索模型，实时联网 |
 | `GLM-4.5-Air` | 0727-106B-API | 轻量模型，快速响应 |
-| `GLM-4.5V` | glm-4.5v | 多模态模型，支持图像理解 |
-| `GLM-4.6` | GLM-4-6-API-V1 | 新版标准模型，200K 上下文 |
-| `GLM-4.6-Thinking` | GLM-4-6-API-V1 | 新版思考模型，增强推理 |
-| `GLM-4.6-Search` | GLM-4-6-API-V1 | 新版搜索模型，改进联网能力 |
-| `GLM-4.6-advanced-search` | GLM-4-6-API-V1 | 高级搜索模型，深度研究 |
+| `GLM-4.6V` | glm-4.6v | 多模态模型，支持图像理解 |
+| `GLM-4.7` | glm-4.7 | 新版标准模型，200K 上下文 |
+| `GLM-4.7-Thinking` | glm-4.7 | 新版思考模型，增强推理 |
+| `GLM-4.7-Search` | glm-4.7 | 新版搜索模型，改进联网能力 |
+| `GLM-4.7-advanced-search` | glm-4.7 | 高级搜索模型，深度研究 |
 
 ### K2Think 提供商
 

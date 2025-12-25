@@ -24,11 +24,11 @@ class Settings(BaseSettings):
     GLM45_THINKING_MODEL: str = os.getenv("GLM45_THINKING_MODEL", "GLM-4.5-Thinking")
     GLM45_SEARCH_MODEL: str = os.getenv("GLM45_SEARCH_MODEL", "GLM-4.5-Search")
     GLM45_AIR_MODEL: str = os.getenv("GLM45_AIR_MODEL", "GLM-4.5-Air")
-    GLM45V_MODEL: str = os.getenv("GLM45V_MODEL", "GLM-4.5V")
-    GLM46_MODEL: str = os.getenv("GLM46_MODEL", "GLM-4.6")
-    GLM46_THINKING_MODEL: str = os.getenv("GLM46_THINKING_MODEL", "GLM-4.6-Thinking")
-    GLM46_SEARCH_MODEL: str = os.getenv("GLM46_SEARCH_MODEL", "GLM-4.6-Search")
-    GLM46_ADVANCED_SEARCH_MODEL: str = os.getenv("GLM46_ADVANCED_SEARCH_MODEL", "GLM-4.6-advanced-search")
+    GLM46V_MODEL: str = os.getenv("GLM46V_MODEL", "GLM-4.6V")
+    GLM47_MODEL: str = os.getenv("GLM47_MODEL", "GLM-4.7")
+    GLM47_THINKING_MODEL: str = os.getenv("GLM47_THINKING_MODEL", "GLM-4.7-Thinking")
+    GLM47_SEARCH_MODEL: str = os.getenv("GLM47_SEARCH_MODEL", "GLM-4.7-Search")
+    GLM47_ADVANCED_SEARCH_MODEL: str = os.getenv("GLM47_ADVANCED_SEARCH_MODEL", "GLM-4.7-advanced-search")
 
     # Provider Model Mapping
     @property
@@ -40,11 +40,11 @@ class Settings(BaseSettings):
             "GLM-4.5-Thinking": "zai",
             "GLM-4.5-Search": "zai",
             "GLM-4.5-Air": "zai",
-            "GLM-4.5V": "zai",
-            "GLM-4.6": "zai",
-            "GLM-4.6-Thinking": "zai",
-            "GLM-4.6-Search": "zai",
-            "GLM-4.6-advanced-search": "zai",
+            "GLM-4.6V": "zai",
+            "GLM-4.7": "zai",
+            "GLM-4.7-Thinking": "zai",
+            "GLM-4.7-Search": "zai",
+            "GLM-4.7-advanced-search": "zai",
             # K2Think models
             "MBZUAI-IFM/K2-Think": "k2think",
             # LongCat models
