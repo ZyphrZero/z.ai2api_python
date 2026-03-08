@@ -1,15 +1,12 @@
-"""
-Token 数据库模型定义
-使用 SQLite 存储各提供商的 Token
-"""
+"""Token 数据库模型定义。"""
 
-import os
+from app.core.config import settings
 
 SQL_CREATE_TABLES = """
 -- Token 配置表
 CREATE TABLE IF NOT EXISTS tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT NOT NULL,              -- 提供商: zai, k2think, longcat
+    provider TEXT NOT NULL,              -- 提供商: zai
     token TEXT NOT NULL UNIQUE,          -- Token 值（唯一）
     token_type TEXT DEFAULT 'user',      -- Token 类型: user, guest, unknown
     is_enabled BOOLEAN DEFAULT 1,        -- 是否启用
@@ -44,5 +41,4 @@ BEGIN
 END;
 """
 
-# 数据库文件路径 - 支持环境变量配置
-DB_PATH = os.getenv("DB_PATH", "tokens.db")
+DB_PATH = settings.DB_PATH

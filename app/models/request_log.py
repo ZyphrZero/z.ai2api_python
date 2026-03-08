@@ -1,12 +1,8 @@
-"""
-请求日志数据库模型
-用于存储API请求的详细记录
-"""
+"""请求日志数据库模型。"""
 
-import os
+from app.core.config import settings
 
-# 数据库路径 - 支持环境变量配置
-DB_PATH = os.getenv("DB_PATH", "tokens.db")  # 复用 tokens 数据库
+DB_PATH = settings.DB_PATH
 
 # 创建请求日志表的SQL
 SQL_CREATE_REQUEST_LOGS_TABLE = """
@@ -14,7 +10,12 @@ CREATE TABLE IF NOT EXISTS request_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     provider TEXT NOT NULL,
+    endpoint TEXT DEFAULT '',
+    source TEXT DEFAULT 'unknown',
+    protocol TEXT DEFAULT 'unknown',
+    client_name TEXT DEFAULT 'Unknown',
     model TEXT NOT NULL,
+    status_code INTEGER DEFAULT 200,
     success BOOLEAN NOT NULL,
     duration REAL,
     first_token_time REAL,
@@ -28,4 +29,5 @@ CREATE TABLE IF NOT EXISTS request_logs (
 CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model);
 CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
+CREATE INDEX IF NOT EXISTS idx_request_logs_source ON request_logs(source);
 """

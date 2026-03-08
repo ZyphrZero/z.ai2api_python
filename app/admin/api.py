@@ -8,9 +8,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from datetime import datetime
 from app.utils.logger import logger
 import os
+from app.services.request_log_dao import get_request_log_dao
 
 router = APIRouter(prefix="/admin/api", tags=["admin-api"])
 templates = Jinja2Templates(directory="app/templates")
+DEFAULT_TOKEN_NAMESPACE = "zai"
 
 
 # ==================== 认证 API ====================
@@ -162,17 +164,23 @@ async def get_token_pool_status(request: Request):
 @router.get("/recent-logs", response_class=HTMLResponse)
 async def get_recent_logs(request: Request):
     """获取最近的请求日志（HTML 片段）"""
-    # TODO: 从数据库或日志文件读取
-    logs = [
-        {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "endpoint": "/v1/chat/completions",
-            "model": "gpt-4o",
-            "status": 200,
-            "duration": "1.23s",
-            "provider": "zai",
-        }
-    ]
+    dao = get_request_log_dao()
+    rows = await dao.get_recent_logs(limit=20)
+    logs = []
+    for row in rows:
+        logs.append(
+            {
+                "timestamp": row.get("timestamp") or row.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "endpoint": row.get("endpoint") or "-",
+                "model": row.get("model") or "-",
+                "status": row.get("status_code") or (200 if row.get("success") else 500),
+                "duration": f"{float(row.get('duration') or 0):.2f}s",
+                "provider": row.get("provider") or "-",
+                "source": row.get("source") or "unknown",
+                "protocol": row.get("protocol") or "unknown",
+                "client_name": row.get("client_name") or "Unknown",
+            }
+        )
 
     context = {
         "request": request,
@@ -190,10 +198,10 @@ async def save_config(request: Request):
 
         # 构建 .env 内容
         env_lines = [
-            "# Z.AI2API 配置文件",
+            "# API 服务配置文件",
             "",
             "# ========== 服务器配置 ==========",
-            f"SERVICE_NAME={form_data.get('service_name', 'Z.AI2API')}",
+            f"SERVICE_NAME={form_data.get('service_name', 'api-proxy-server')}",
             f"LISTEN_PORT={form_data.get('listen_port', '8080')}",
             f"DEBUG_LOGGING={'true' if 'debug_logging' in form_data else 'false'}",
             "",
@@ -209,15 +217,7 @@ async def save_config(request: Request):
             "# ========== Token 池配置 ==========",
             f"TOKEN_FAILURE_THRESHOLD={form_data.get('token_failure_threshold', '3')}",
             f"TOKEN_RECOVERY_TIMEOUT={form_data.get('token_recovery_timeout', '1800')}",
-            "",
-            "# ========== 提供商配置 ==========",
-            f"DEFAULT_PROVIDER={form_data.get('default_provider', 'zai')}",
         ]
-
-        # LongCat Token（可选）
-        longcat_token = form_data.get('longcat_token', '').strip()
-        if longcat_token:
-            env_lines.append(f"LONGCAT_TOKEN={longcat_token}")
 
         # 写入 .env 文件
         with open(".env", "w", encoding="utf-8") as f:
@@ -245,6 +245,45 @@ async def save_config(request: Request):
         """)
 
 
+@router.post("/config/reset")
+async def reset_config():
+    """将配置重置为 .env.example 并热重载。"""
+    try:
+        with open(".env.example", "r", encoding="utf-8") as source:
+            env_content = source.read().strip()
+
+        with open(".env", "w", encoding="utf-8") as target:
+            target.write(env_content + "\n")
+
+        await reload_settings()
+        logger.info("✅ 配置已重置为 .env.example 默认值")
+
+        response = HTMLResponse("""
+        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
+            <strong class="font-bold">已重置！</strong>
+            <span class="block sm:inline">配置已恢复为 .env.example 默认值，页面即将刷新。</span>
+        </div>
+        """)
+        response.headers["HX-Refresh"] = "true"
+        return response
+    except FileNotFoundError:
+        logger.error("❌ 未找到 .env.example，无法重置配置")
+        return HTMLResponse("""
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+            <strong class="font-bold">错误！</strong>
+            <span class="block sm:inline">未找到 .env.example，无法重置配置。</span>
+        </div>
+        """, status_code=404)
+    except Exception as e:
+        logger.error(f"❌ 配置重置失败: {str(e)}")
+        return HTMLResponse(f"""
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+            <strong class="font-bold">错误！</strong>
+            <span class="block sm:inline">重置失败: {str(e)}</span>
+        </div>
+        """, status_code=500)
+
+
 @router.get("/env-preview")
 async def get_env_preview():
     """获取 .env 文件预览"""
@@ -258,61 +297,48 @@ async def get_env_preview():
         return HTMLResponse(f"<pre># 读取失败: {str(e)}</pre>")
 
 
-@router.get("/provider-status", response_class=HTMLResponse)
-async def get_provider_status(request: Request):
-    """获取提供商状态详情（HTML 片段）"""
+@router.get("/channel-status", response_class=HTMLResponse)
+async def get_channel_status(request: Request):
+    """获取当前通道状态详情（HTML 片段）。"""
     from app.services.token_dao import get_token_dao
 
     dao = get_token_dao()
 
-    # 获取所有提供商的统计信息
-    providers = ["zai", "k2think", "longcat"]
-    provider_stats_list = []
+    stats = await dao.get_provider_stats(DEFAULT_TOKEN_NAMESPACE)
+    tokens = await dao.get_tokens_by_provider(
+        DEFAULT_TOKEN_NAMESPACE,
+        enabled_only=False,
+    )
 
-    for provider in providers:
-        stats = await dao.get_provider_stats(provider)
-        tokens = await dao.get_tokens_by_provider(provider, enabled_only=False)
+    total_requests = stats.get("total_requests", 0) or 0
+    successful_requests = stats.get("successful_requests", 0) or 0
+    failed_requests = stats.get("failed_requests", 0) or 0
 
-        # 计算成功率
-        total_requests = stats.get("total_requests", 0) or 0
-        successful_requests = stats.get("successful_requests", 0) or 0
-        failed_requests = stats.get("failed_requests", 0) or 0
+    if total_requests > 0:
+        success_rate = f"{(successful_requests / total_requests * 100):.1f}%"
+    else:
+        success_rate = "N/A"
 
-        if total_requests > 0:
-            success_rate = f"{(successful_requests / total_requests * 100):.1f}%"
-        else:
-            success_rate = "N/A"
-
-        # Token 类型统计
-        user_tokens = sum(1 for t in tokens if t.get("token_type") == "user")
-        guest_tokens = sum(1 for t in tokens if t.get("token_type") == "guest")
-        unknown_tokens = sum(1 for t in tokens if t.get("token_type") == "unknown")
-
-        provider_stats_list.append({
-            "name": provider,  # 小写名称（用于 URL 参数）
-            "name_upper": provider.upper(),  # 大写名称（用于显示）
-            "display_name": {
-                "zai": "Z.AI",
-                "k2think": "K2Think",
-                "longcat": "LongCat"
-            }.get(provider, provider.upper()),
-            "total_tokens": stats.get("total_tokens", 0) or 0,
-            "enabled_tokens": stats.get("enabled_tokens", 0) or 0,
-            "user_tokens": user_tokens,
-            "guest_tokens": guest_tokens,
-            "unknown_tokens": unknown_tokens,
-            "total_requests": total_requests,
-            "successful_requests": successful_requests,
-            "failed_requests": failed_requests,
-            "success_rate": success_rate,
-        })
+    status = {
+        "total_tokens": stats.get("total_tokens", 0) or 0,
+        "enabled_tokens": stats.get("enabled_tokens", 0) or 0,
+        "user_tokens": sum(1 for token in tokens if token.get("token_type") == "user"),
+        "guest_tokens": sum(1 for token in tokens if token.get("token_type") == "guest"),
+        "unknown_tokens": sum(
+            1 for token in tokens if token.get("token_type") == "unknown"
+        ),
+        "total_requests": total_requests,
+        "successful_requests": successful_requests,
+        "failed_requests": failed_requests,
+        "success_rate": success_rate,
+    }
 
     context = {
         "request": request,
-        "providers": provider_stats_list,
+        "status": status,
     }
 
-    return templates.TemplateResponse("components/provider_status.html", context)
+    return templates.TemplateResponse("components/channel_status.html", context)
 
 
 @router.get("/live-logs", response_class=HTMLResponse)
@@ -377,17 +403,19 @@ async def get_live_logs():
 # ==================== Token 管理 API ====================
 
 @router.get("/tokens/list", response_class=HTMLResponse)
-async def get_tokens_list(request: Request, provider: str = "zai"):
+async def get_tokens_list(request: Request):
     """获取 Token 列表（HTML 片段）"""
     from app.services.token_dao import get_token_dao
 
     dao = get_token_dao()
-    tokens = await dao.get_tokens_by_provider(provider, enabled_only=False)
+    tokens = await dao.get_tokens_by_provider(
+        DEFAULT_TOKEN_NAMESPACE,
+        enabled_only=False,
+    )
 
     context = {
         "request": request,
         "tokens": tokens,
-        "provider": provider
     }
 
     return templates.TemplateResponse("components/token_list.html", context)
@@ -400,7 +428,6 @@ async def add_tokens(request: Request):
     from app.utils.token_pool import get_token_pool
 
     form_data = await request.form()
-    provider = form_data.get("provider", "zai")
     single_token = form_data.get("single_token", "").strip()
     bulk_tokens = form_data.get("bulk_tokens", "").strip()
 
@@ -410,7 +437,11 @@ async def add_tokens(request: Request):
 
     # 添加单个 Token（带验证）
     if single_token:
-        token_id = await dao.add_token(provider, single_token, validate=True)
+        token_id = await dao.add_token(
+            DEFAULT_TOKEN_NAMESPACE,
+            single_token,
+            validate=True,
+        )
         if token_id:
             added_count += 1
         else:
@@ -427,7 +458,11 @@ async def add_tokens(request: Request):
             elif line:
                 tokens.append(line)
 
-        success, failed = await dao.bulk_add_tokens(provider, tokens, validate=True)
+        success, failed = await dao.bulk_add_tokens(
+            DEFAULT_TOKEN_NAMESPACE,
+            tokens,
+            validate=True,
+        )
         added_count += success
         failed_count += failed
 
@@ -435,8 +470,8 @@ async def add_tokens(request: Request):
     if added_count > 0:
         pool = get_token_pool()
         if pool:
-            await pool.sync_from_database(provider)
-            logger.info(f"✅ Token 池已同步，新增 {added_count} 个 Token ({provider})")
+            await pool.sync_from_database(DEFAULT_TOKEN_NAMESPACE)
+            logger.info(f"✅ Token 池已同步，新增 {added_count} 个 Token")
 
     # 生成响应
     if added_count > 0 and failed_count == 0:
@@ -481,7 +516,7 @@ async def toggle_token(token_id: int, enabled: bool):
             if row:
                 provider = row[0]
                 await pool.sync_from_database(provider)
-                logger.info(f"✅ Token 池已同步 ({provider})")
+                logger.info("✅ Token 池已同步")
 
     # 根据状态返回不同样式的按钮
     if enabled:
@@ -525,23 +560,24 @@ async def delete_token(token_id: int):
     pool = get_token_pool()
     if pool:
         await pool.sync_from_database(provider)
-        logger.info(f"✅ Token 池已同步 ({provider})")
+        logger.info("✅ Token 池已同步")
 
     return HTMLResponse("")  # 返回空内容，让 htmx 移除元素
 
 
 @router.get("/tokens/stats", response_class=HTMLResponse)
-async def get_tokens_stats(request: Request, provider: str = "zai"):
+async def get_tokens_stats(request: Request):
     """获取 Token 统计信息（HTML 片段）"""
     from app.services.token_dao import get_token_dao
 
     dao = get_token_dao()
 
-    # 获取提供商统计
-    stats = await dao.get_provider_stats(provider)
+    stats = await dao.get_provider_stats(DEFAULT_TOKEN_NAMESPACE)
 
-    # 获取所有 Token 进行类型统计
-    tokens = await dao.get_tokens_by_provider(provider, enabled_only=False)
+    tokens = await dao.get_tokens_by_provider(
+        DEFAULT_TOKEN_NAMESPACE,
+        enabled_only=False,
+    )
 
     user_tokens = sum(1 for t in tokens if t.get("token_type") == "user")
     guest_tokens = sum(1 for t in tokens if t.get("token_type") == "guest")
@@ -561,24 +597,20 @@ async def get_tokens_stats(request: Request, provider: str = "zai"):
     context = {
         "request": request,
         "stats": stats_data,
-        "provider": provider
     }
 
     return templates.TemplateResponse("components/token_stats.html", context)
 
 
 @router.post("/tokens/validate")
-async def validate_tokens(request: Request):
+async def validate_tokens():
     """批量验证 Token"""
     from app.services.token_dao import get_token_dao
-
-    form_data = await request.form()
-    provider = form_data.get("provider", "zai")
 
     dao = get_token_dao()
 
     # 执行批量验证
-    stats = await dao.validate_all_tokens(provider)
+    stats = await dao.validate_all_tokens(DEFAULT_TOKEN_NAMESPACE)
 
     valid_count = stats.get("valid", 0)
     guest_count = stats.get("guest", 0)
@@ -638,12 +670,9 @@ async def validate_single_token(request: Request, token_id: int):
 
 
 @router.post("/tokens/health-check")
-async def health_check_tokens(request: Request):
+async def health_check_tokens():
     """执行 Token 池健康检查"""
     from app.utils.token_pool import get_token_pool
-
-    form_data = await request.form()
-    provider = form_data.get("provider", "zai")
 
     pool = get_token_pool()
 
@@ -682,12 +711,9 @@ async def health_check_tokens(request: Request):
 
 
 @router.post("/tokens/sync-pool")
-async def sync_token_pool(request: Request):
+async def sync_token_pool():
     """手动同步 Token 池（从数据库重新加载）"""
     from app.utils.token_pool import get_token_pool
-
-    form_data = await request.form()
-    provider = form_data.get("provider", "zai")
 
     pool = get_token_pool()
 
@@ -700,7 +726,7 @@ async def sync_token_pool(request: Request):
         """)
 
     # 从数据库同步
-    await pool.sync_from_database(provider)
+    await pool.sync_from_database(DEFAULT_TOKEN_NAMESPACE)
 
     # 获取同步后的状态
     status = pool.get_pool_status()
@@ -708,11 +734,13 @@ async def sync_token_pool(request: Request):
     available_count = status.get("available_tokens", 0)
     user_count = status.get("user_tokens", 0)
 
-    logger.info(f"✅ Token 池手动同步完成: {provider}, 总计 {total_count} 个 Token, 可用 {available_count} 个, 认证用户 {user_count} 个")
+    logger.info(
+        f"✅ Token 池手动同步完成，总计 {total_count} 个 Token, 可用 {available_count} 个, 认证用户 {user_count} 个"
+    )
 
     if total_count == 0:
         message_class = "bg-yellow-100 border-yellow-400 text-yellow-700"
-        message = f"同步完成：当前没有可用的 {provider.upper()} Token，请在数据库中启用 Token。"
+        message = "同步完成：当前没有可用 Token，请在数据库中启用 Token。"
     elif available_count == 0:
         message_class = "bg-orange-100 border-orange-400 text-orange-700"
         message = f"同步完成：共 {total_count} 个 Token，但无可用 Token（可能都已禁用）。"

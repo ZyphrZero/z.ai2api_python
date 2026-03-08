@@ -90,8 +90,6 @@ async def config_page(request: Request):
             "TOKEN_FAILURE_THRESHOLD": settings.TOKEN_FAILURE_THRESHOLD,
             "TOKEN_RECOVERY_TIMEOUT": settings.TOKEN_RECOVERY_TIMEOUT,
             "SCAN_LIMIT": settings.SCAN_LIMIT,
-            "LONGCAT_TOKEN": settings.LONGCAT_TOKEN or "",
-            "DEFAULT_PROVIDER": settings.DEFAULT_PROVIDER,
         },
         "env_content": env_content,
     }

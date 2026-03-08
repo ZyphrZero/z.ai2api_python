@@ -13,7 +13,7 @@ Token 池管理器 - 基于数据库的 Token 轮询和健康检查
 
 import asyncio
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from threading import Lock
 import httpx
@@ -221,7 +221,7 @@ class TokenPool:
         if not self.token_statuses:
             logger.warning("⚠️ Token 池为空，将依赖匿名模式")
 
-    def get_next_token(self) -> Optional[str]:
+    def get_next_token(self, exclude_tokens: Optional[Set[str]] = None) -> Optional[str]:
         """
         获取下一个可用的认证用户 Token（轮询算法）
 
@@ -232,11 +232,21 @@ class TokenPool:
             if not self.token_statuses:
                 return None
 
+            excluded = exclude_tokens or set()
+
             available_tokens = self._get_available_user_tokens()
+            if excluded:
+                available_tokens = [
+                    token for token in available_tokens if token not in excluded
+                ]
             if not available_tokens:
                 # 尝试恢复过期的失败 Token
                 self._try_recover_failed_tokens()
                 available_tokens = self._get_available_user_tokens()
+                if excluded:
+                    available_tokens = [
+                        token for token in available_tokens if token not in excluded
+                    ]
 
                 if not available_tokens:
                     logger.warning("⚠️ 没有可用的认证用户 Token")
@@ -520,7 +530,7 @@ async def initialize_token_pool_from_db(
     从数据库初始化全局 Token 池
 
     Args:
-        provider: 提供商名称 (zai, k2think, longcat)
+        provider: 提供商名称（当前仅使用 zai）
         failure_threshold: 失败阈值
         recovery_timeout: 恢复超时时间（秒）
 

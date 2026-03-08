@@ -392,7 +392,6 @@ class TokenDAO:
                 provider = row["provider"]
                 token = row["token"]
 
-            # 仅对 zai 提供商验证
             if provider != "zai":
                 logger.info(f"⏭️ 跳过非 zai 提供商的 Token 验证: {provider}")
                 return True

@@ -4,9 +4,9 @@
         <thead class="bg-gray-50">
             <tr>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">时间</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">来源</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">端点</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模型</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">提供商</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">耗时</th>
             </tr>
@@ -15,13 +15,12 @@
             {% for log in logs %}
             <tr class="hover:bg-gray-50">
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ log.timestamp }}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <div>{{ log.source }}</div>
+                    <div class="text-xs text-gray-400">{{ log.client_name }} · {{ log.protocol }}</div>
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.endpoint }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ log.model }}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                        {{ log.provider }}
-                    </span>
-                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm">
                     {% if log.status == 200 %}
                     <span class="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">

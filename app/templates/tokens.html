@@ -4,35 +4,17 @@
 
 {% block content %}
 <div class="space-y-6" x-data="{
-    provider: 'zai',
     showAddModal: false,
     showValidateModal: false,
     newToken: '',
     bulkTokens: '',
-    isValidating: false,
-    init() {
-        // 从 URL 参数读取 provider
-        const urlParams = new URLSearchParams(window.location.search);
-        const providerParam = urlParams.get('provider');
-        if (providerParam && ['zai', 'k2think', 'longcat'].includes(providerParam.toLowerCase())) {
-            this.provider = providerParam.toLowerCase();
-        }
-
-        // 监听 provider 变化并触发刷新
-        this.$watch('provider', (newValue, oldValue) => {
-            if (newValue !== oldValue) {
-                console.log('Provider changed to:', newValue);
-                htmx.trigger('#token-list', 'providerChange');
-                htmx.trigger('#token-stats', 'providerChange');
-            }
-        });
-    }
+    isValidating: false
 }">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
         <div>
             <h2 class="text-3xl font-bold text-gray-900">Token 管理</h2>
-            <p class="mt-1 text-sm text-gray-600">管理和监控 AI 提供商的 Token</p>
+            <p class="mt-1 text-sm text-gray-600">管理和维护当前服务使用的 Token</p>
         </div>
         <div class="flex space-x-3">
             <button @click="showValidateModal = true"
@@ -55,8 +37,7 @@
     <!-- 统计面板 -->
     <div id="token-stats"
          hx-get="/admin/api/tokens/stats"
-         :hx-vals="JSON.stringify({provider: provider})"
-         hx-trigger="load, providerChange from:body, statsRefresh from:body"
+         hx-trigger="load, statsRefresh from:body"
          hx-swap="innerHTML">
         <!-- 加载中 -->
         <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -87,31 +68,11 @@
         </div>
     </div>
 
-    <!-- 提供商切换和操作栏 -->
+    <!-- 当前通道和操作栏 -->
     <div class="bg-white shadow rounded-lg p-4">
-        <div class="flex items-center justify-between flex-wrap gap-4">
-            <!-- 提供商切换 -->
-            <div class="flex space-x-2">
-                <button @click="provider = 'zai'"
-                        :class="provider === 'zai' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'"
-                        class="px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                    Z.AI
-                </button>
-                <button @click="provider = 'k2think'"
-                        :class="provider === 'k2think' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'"
-                        class="px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                    K2Think
-                </button>
-                <button @click="provider = 'longcat'"
-                        :class="provider === 'longcat' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'"
-                        class="px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                    LongCat
-                </button>
-            </div>
-
+        <div class="flex items-center justify-end flex-wrap gap-4">
             <!-- 刷新按钮 -->
             <button hx-get="/admin/api/tokens/list"
-                    :hx-vals="JSON.stringify({provider: provider})"
                     hx-target="#token-list"
                     class="flex items-center px-3 py-2 text-gray-600 hover:text-indigo-600 hover:bg-gray-50 rounded-md transition-colors"
                     title="刷新列表">
@@ -127,12 +88,11 @@
     <div class="bg-white shadow rounded-lg">
         <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h3 class="text-lg font-medium text-gray-900 flex items-center">
-                <span x-text="provider.toUpperCase()"></span> Token 列表
+                Token 列表
                 <span class="ml-2 text-sm font-normal text-gray-500" id="token-count"></span>
             </h3>
             <div class="flex items-center space-x-2">
                 <button hx-post="/admin/api/tokens/sync-pool"
-                        :hx-vals="JSON.stringify({provider: provider})"
                         hx-target="#notification"
                         class="text-sm text-purple-600 hover:text-purple-700 flex items-center">
                     <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -141,7 +101,6 @@
                     同步 Token 池
                 </button>
                 <button hx-post="/admin/api/tokens/health-check"
-                        :hx-vals="JSON.stringify({provider: provider})"
                         hx-target="#notification"
                         class="text-sm text-blue-600 hover:text-blue-700 flex items-center">
                     <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -153,8 +112,7 @@
         </div>
         <div id="token-list"
              hx-get="/admin/api/tokens/list"
-             :hx-vals="JSON.stringify({provider: provider})"
-             hx-trigger="load, providerChange from:body"
+             hx-trigger="load, tokenListRefresh from:body"
              hx-swap="innerHTML">
             <!-- Token 列表内容 -->
             <div class="flex justify-center items-center py-12">
@@ -195,7 +153,7 @@
                         </div>
                         <div class="ml-3">
                             <p class="text-sm text-blue-700">
-                                <strong>Z.AI Token 验证：</strong>添加时将自动验证 Token 有效性，
+                                <strong>Token 验证：</strong>添加时将自动验证 Token 有效性，
                                 <span class="font-semibold">匿名用户 Token (guest) 将被拒绝</span>。
                             </p>
                         </div>
@@ -229,12 +187,11 @@
                     </button>
                     <button hx-post="/admin/api/tokens/add"
                             :hx-vals="JSON.stringify({
-                                provider: provider,
                                 single_token: newToken,
                                 bulk_tokens: bulkTokens
                             })"
                             hx-target="#notification"
-                            @htmx:after-request="showAddModal = false; newToken = ''; bulkTokens = ''; htmx.trigger('#token-list', 'providerChange'); htmx.trigger('body', 'statsRefresh')"
+                            @htmx:after-request="showAddModal = false; newToken = ''; bulkTokens = ''; htmx.trigger('body', 'tokenListRefresh'); htmx.trigger('body', 'statsRefresh')"
                             class="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700">
                         添加
                     </button>
@@ -272,7 +229,7 @@
                         </div>
                         <div class="ml-3">
                             <p class="text-sm text-yellow-700">
-                                将验证所有 <strong x-text="provider.toUpperCase()"></strong> Token 的有效性。
+                                将验证当前通道的所有 Token 的有效性。
                                 <br>此操作可能需要较长时间，请耐心等待。
                             </p>
                         </div>
@@ -309,10 +266,9 @@
                         取消
                     </button>
                     <button hx-post="/admin/api/tokens/validate"
-                            :hx-vals="JSON.stringify({provider: provider})"
                             hx-target="#notification"
                             @htmx:before-request="isValidating = true; document.getElementById('validate-progress').classList.remove('hidden')"
-                            @htmx:after-request="isValidating = false; showValidateModal = false; document.getElementById('validate-progress').classList.add('hidden'); htmx.trigger('#token-list', 'providerChange'); htmx.trigger('body', 'statsRefresh')"
+                            @htmx:after-request="isValidating = false; showValidateModal = false; document.getElementById('validate-progress').classList.add('hidden'); htmx.trigger('body', 'tokenListRefresh'); htmx.trigger('body', 'statsRefresh')"
                             :disabled="isValidating"
                             class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
                         开始验证

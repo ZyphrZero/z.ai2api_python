@@ -1,78 +1,61 @@
-<!-- 提供商状态详情组件 -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-    {% for provider in providers %}
+<!-- 通道状态详情组件 -->
+<div class="grid grid-cols-1 gap-6">
     <div class="border rounded-lg p-6 hover:shadow-md transition-shadow">
-        <!-- 提供商头部 -->
-        <div class="mb-4">
-            <h4 class="text-lg font-semibold text-gray-900">{{ provider.display_name }}</h4>
-        </div>
-
-        <!-- Token 统计 -->
         <div class="space-y-3 mb-4">
             <div class="bg-gray-50 rounded-md p-3">
                 <h5 class="text-xs font-medium text-gray-500 mb-2">Token 统计</h5>
                 <div class="space-y-2 text-sm">
                     <div class="flex justify-between">
                         <span class="text-gray-600">总计:</span>
-                        <span class="font-medium text-gray-900">{{ provider.total_tokens }}</span>
+                        <span class="font-medium text-gray-900">{{ status.total_tokens }}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">已启用:</span>
-                        <span class="font-medium text-green-600">{{ provider.enabled_tokens }}</span>
+                        <span class="font-medium text-green-600">{{ status.enabled_tokens }}</span>
                     </div>
                     <div class="flex justify-between text-xs text-gray-500">
                         <span>认证用户:</span>
-                        <span>{{ provider.user_tokens }}</span>
+                        <span>{{ status.user_tokens }}</span>
                     </div>
                     <div class="flex justify-between text-xs text-gray-500">
                         <span>匿名用户:</span>
-                        <span>{{ provider.guest_tokens }}</span>
+                        <span>{{ status.guest_tokens }}</span>
                     </div>
                     <div class="flex justify-between text-xs text-gray-500">
                         <span>未知类型:</span>
-                        <span>{{ provider.unknown_tokens }}</span>
+                        <span>{{ status.unknown_tokens }}</span>
                     </div>
                 </div>
             </div>
 
-            <!-- 请求统计 -->
             <div class="bg-gray-50 rounded-md p-3">
                 <h5 class="text-xs font-medium text-gray-500 mb-2">请求统计</h5>
                 <div class="space-y-2 text-sm">
                     <div class="flex justify-between">
                         <span class="text-gray-600">总请求数:</span>
-                        <span class="font-medium text-gray-900">{{ provider.total_requests }}</span>
+                        <span class="font-medium text-gray-900">{{ status.total_requests }}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">成功:</span>
-                        <span class="font-medium text-green-600">{{ provider.successful_requests }}</span>
+                        <span class="font-medium text-green-600">{{ status.successful_requests }}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">失败:</span>
-                        <span class="font-medium text-red-600">{{ provider.failed_requests }}</span>
+                        <span class="font-medium text-red-600">{{ status.failed_requests }}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-600">成功率:</span>
-                        <span class="font-medium text-indigo-600">{{ provider.success_rate }}</span>
+                        <span class="font-medium text-indigo-600">{{ status.success_rate }}</span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 快速操作 -->
         <div class="pt-3 border-t border-gray-200">
-            <a href="/admin/tokens?provider={{ provider.name }}"
+            <a href="/admin/tokens"
                class="text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors">
                 管理 Token →
             </a>
         </div>
     </div>
-    {% endfor %}
 </div>
-
-<!-- 无提供商状态 -->
-{% if not providers %}
-<div class="text-center py-8 text-gray-500">
-    <p>暂无提供商状态信息</p>
-</div>
-{% endif %}

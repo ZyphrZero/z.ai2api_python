@@ -25,6 +25,8 @@ class Message(BaseModel):
     content: Optional[Union[str, List[ContentPart]]] = None
     reasoning_content: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class OpenAIRequest(BaseModel):
@@ -37,6 +39,8 @@ class OpenAIRequest(BaseModel):
     max_tokens: Optional[int] = None
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Any] = None
+    enable_thinking: Optional[bool] = None
+    web_search: Optional[bool] = None
 
 
 class ModelItem(BaseModel):
@@ -55,12 +59,19 @@ class UpstreamRequest(BaseModel):
     messages: List[Message]
     params: Dict[str, Any] = {}
     features: Dict[str, Any] = {}
+    signature_prompt: Optional[str] = None
+    files: Optional[List[Dict[str, Any]]] = None
+    extra: Optional[Dict[str, Any]] = None
     background_tasks: Optional[Dict[str, bool]] = None
     chat_id: Optional[str] = None
     id: Optional[str] = None
+    session_id: Optional[str] = None
+    current_user_message_id: Optional[str] = None
+    current_user_message_parent_id: Optional[str] = None
     mcp_servers: Optional[List[str]] = None
     model_item: Optional[Dict[str, Any]] = {}  # Model item dictionary
     tools: Optional[List[Dict[str, Any]]] = None  # Add tools field for OpenAI compatibility
+    tool_choice: Optional[Any] = None
     variables: Optional[Dict[str, str]] = None
     model_config = {"protected_namespaces": ()}
 
@@ -122,6 +133,10 @@ class UpstreamDataData(BaseModel):
     edit_content: str = ""
     phase: str = ""
     done: bool = False
+    results: Optional[List[Dict[str, Any]]] = None
+    sources: Optional[List[Dict[str, Any]]] = None
+    citations: Optional[List[Dict[str, Any]]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
     usage: Optional[Usage] = None
     error: Optional[UpstreamError] = None
     inner: Optional[UpstreamDataInner] = None

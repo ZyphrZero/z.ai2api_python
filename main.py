@@ -10,10 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.core import openai
+from app.core import claude, openai
 from app.utils.reload_config import RELOAD_CONFIG
 from app.utils.logger import setup_logger
-from app.providers import initialize_providers
+from app.core.upstream import UpstreamClient
 
 from app.admin import routes as admin_routes
 from app.admin import api as admin_api
@@ -25,16 +25,25 @@ from granian import Granian
 logger = setup_logger(log_dir="logs", debug_mode=settings.DEBUG_LOGGING)
 
 
+async def warmup_upstream_client():
+    """可选预热上游适配器，提前初始化动态依赖。"""
+    try:
+        client = UpstreamClient()
+        logger.info(f"✅ 上游适配器已就绪，支持 {len(client.get_supported_models())} 个模型")
+    except Exception as exc:
+        logger.warning(f"⚠️ 上游适配器预热失败: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 初始化 Token 数据库
     from app.services.token_dao import init_token_database
+    from app.services.request_log_dao import init_request_log_dao
+
     await init_token_database()
+    init_request_log_dao()
 
-    # 初始化提供商系统
-    initialize_providers()
-
-    # 从数据库初始化 token 池（Z.AI 提供商）
+    # 从数据库初始化认证 token 池
     from app.utils.token_pool import initialize_token_pool_from_db
     token_pool = await initialize_token_pool_from_db(
         provider="zai",
@@ -45,9 +54,30 @@ async def lifespan(app: FastAPI):
     if not token_pool and not settings.ANONYMOUS_MODE:
         logger.warning("⚠️ 未找到可用 Token 且未启用匿名模式，服务可能无法正常工作")
 
+    if settings.ANONYMOUS_MODE:
+        from app.utils.guest_session_pool import initialize_guest_session_pool
+
+        guest_pool = await initialize_guest_session_pool(
+            pool_size=settings.GUEST_POOL_SIZE,
+            session_max_age=settings.GUEST_SESSION_MAX_AGE,
+            maintenance_interval=settings.GUEST_POOL_MAINTENANCE_INTERVAL,
+        )
+        guest_status = guest_pool.get_pool_status()
+        logger.info(
+            "🫥 匿名会话池已就绪: "
+            f"{guest_status.get('valid_sessions', 0)} 个可用会话"
+        )
+
+    await warmup_upstream_client()
+
     yield
 
     logger.info("🔄 应用正在关闭...")
+
+    if settings.ANONYMOUS_MODE:
+        from app.utils.guest_session_pool import close_guest_session_pool
+
+        await close_guest_session_pool()
 
 
 # Create FastAPI app with lifespan
@@ -74,6 +104,7 @@ except RuntimeError:
 
 # Include API routers
 app.include_router(openai.router)
+app.include_router(claude.router)
 
 # Include admin routers
 app.include_router(admin_routes.router)

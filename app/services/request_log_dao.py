@@ -33,11 +33,31 @@ class RequestLogDAO:
         try:
             conn = sqlite3.connect(self.db_path)
             conn.executescript(SQL_CREATE_REQUEST_LOGS_TABLE)
+            self._ensure_columns(conn)
             conn.commit()
             conn.close()
             logger.debug("请求日志表初始化成功")
         except Exception as e:
             logger.error(f"初始化请求日志表失败: {e}")
+
+    def _ensure_columns(self, conn: sqlite3.Connection):
+        """为旧数据库补齐新增列。"""
+        cursor = conn.execute("PRAGMA table_info(request_logs)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        required_columns = {
+            "endpoint": "TEXT DEFAULT ''",
+            "source": "TEXT DEFAULT 'unknown'",
+            "protocol": "TEXT DEFAULT 'unknown'",
+            "client_name": "TEXT DEFAULT 'Unknown'",
+            "status_code": "INTEGER DEFAULT 200",
+        }
+
+        for column, definition in required_columns.items():
+            if column in existing_columns:
+                continue
+            conn.execute(
+                f"ALTER TABLE request_logs ADD COLUMN {column} {definition}"
+            )
 
     @asynccontextmanager
     async def get_connection(self):
@@ -52,7 +72,12 @@ class RequestLogDAO:
     async def add_log(
         self,
         provider: str,
+        endpoint: str,
+        source: str,
+        protocol: str,
+        client_name: str,
         model: str,
+        status_code: int,
         success: bool,
         duration: float = 0.0,
         first_token_time: float = 0.0,
@@ -65,7 +90,12 @@ class RequestLogDAO:
 
         Args:
             provider: 提供商名称
+            endpoint: 请求端点
+            source: 请求来源标识
+            protocol: 协议类型
+            client_name: 客户端名称
             model: 模型名称
+            status_code: 请求状态码
             success: 是否成功
             duration: 总耗时（秒）
             first_token_time: 首字延迟（秒）
@@ -82,12 +112,27 @@ class RequestLogDAO:
             cursor = await conn.execute(
                 """
                 INSERT INTO request_logs
-                (provider, model, success, duration, first_token_time,
+                (provider, endpoint, source, protocol, client_name, model,
+                 status_code, success, duration, first_token_time,
                  input_tokens, output_tokens, total_tokens, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (provider, model, success, duration, first_token_time,
-                 input_tokens, output_tokens, total_tokens, error_message)
+                (
+                    provider,
+                    endpoint,
+                    source,
+                    protocol,
+                    client_name,
+                    model,
+                    status_code,
+                    success,
+                    duration,
+                    first_token_time,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    error_message,
+                )
             )
             await conn.commit()
             return cursor.lastrowid
@@ -97,7 +142,8 @@ class RequestLogDAO:
         limit: int = 100,
         provider: str = None,
         model: str = None,
-        success: bool = None
+        success: bool = None,
+        source: str = None,
     ) -> List[Dict]:
         """
         获取最近的请求日志
@@ -125,6 +171,10 @@ class RequestLogDAO:
         if success is not None:
             query += " AND success = ?"
             params.append(success)
+
+        if source:
+            query += " AND source = ?"
+            params.append(source)
 
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)

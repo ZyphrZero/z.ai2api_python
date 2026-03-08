@@ -1,55 +1,50 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import time
 import json
-from typing import List, Dict, Any
-from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+import time
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import settings
-from app.models.schemas import OpenAIRequest, Message, ModelsResponse, Model, OpenAIResponse, Choice, Usage
+from app.models.schemas import (
+    Choice,
+    Message,
+    Model,
+    ModelsResponse,
+    OpenAIRequest,
+    OpenAIResponse,
+    Usage,
+)
+from app.core.upstream import UpstreamClient
 from app.utils.logger import get_logger
-from app.providers import get_provider_router
-from app.utils.token_pool import get_token_pool
+from app.utils.request_logging import (
+    extract_openai_usage,
+    wrap_openai_stream_with_logging,
+    write_request_log,
+)
+from app.utils.request_source import detect_request_source, format_request_source
 
 logger = get_logger()
 router = APIRouter()
 
-# 全局提供商路由器实例
-provider_router = None
+_upstream_client: Optional[UpstreamClient] = None
 
 
-def get_provider_router_instance():
-    """获取提供商路由器实例"""
-    global provider_router
-    if provider_router is None:
-        provider_router = get_provider_router()
-    return provider_router
-
-
-def create_chunk(chat_id: str, model: str, delta: Dict[str, Any], finish_reason: str = None) -> Dict[str, Any]:
-    """创建标准的 OpenAI chunk 结构"""
-    return {
-        "choices": [{
-            "delta": delta,
-            "finish_reason": finish_reason,
-            "index": 0,
-            "logprobs": None,
-        }],
-        "created": int(time.time()),
-        "id": chat_id,
-        "model": model,
-        "object": "chat.completion.chunk",
-        "system_fingerprint": "fp_zai_001",
-    }
+def get_upstream_client() -> UpstreamClient:
+    """获取懒加载的上游适配器单例。"""
+    global _upstream_client
+    if _upstream_client is None:
+        _upstream_client = UpstreamClient()
+    return _upstream_client
 
 
 async def handle_non_stream_response(stream_response, request: OpenAIRequest) -> JSONResponse:
-    """处理非流式响应"""
+    """处理非流式响应。"""
     logger.info("📄 开始处理非流式响应")
 
-    # 收集所有流式数据
     full_content = []
     async for chunk_data in stream_response():
         if chunk_data.startswith("data: "):
@@ -66,26 +61,23 @@ async def handle_non_stream_response(stream_response, request: OpenAIRequest) ->
                 except json.JSONDecodeError:
                     continue
 
-    # 构建响应
     response_data = OpenAIResponse(
         id=f"chatcmpl-{int(time.time())}",
         object="chat.completion",
         created=int(time.time()),
         model=request.model,
-        choices=[Choice(
-            index=0,
-            message=Message(
-                role="assistant",
-                content="".join(full_content),
-                tool_calls=None
-            ),
-            finish_reason="stop"
-        )],
-        usage=Usage(
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0
-        )
+        choices=[
+            Choice(
+                index=0,
+                message=Message(
+                    role="assistant",
+                    content="".join(full_content),
+                    tool_calls=None,
+                ),
+                finish_reason="stop",
+            )
+        ],
+        usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
     )
 
     logger.info("✅ 非流式响应处理完成")
@@ -94,92 +86,133 @@ async def handle_non_stream_response(stream_response, request: OpenAIRequest) ->
 
 @router.get("/v1/models")
 async def list_models():
-    """List available models from all providers"""
+    """返回当前服务支持的模型列表。"""
     try:
-        router_instance = get_provider_router_instance()
-        models_data = router_instance.get_models_list()
-        return JSONResponse(content=models_data)
-    except Exception as e:
-        logger.error(f"❌ 获取模型列表失败: {e}")
-        # 返回默认模型列表作为后备
+        client = get_upstream_client()
         current_time = int(time.time())
-        fallback_response = ModelsResponse(
+        response = ModelsResponse(
             data=[
-                Model(id=settings.GLM47_MODEL, created=current_time, owned_by="z.ai"),
-                Model(id=settings.GLM47_THINKING_MODEL, created=current_time, owned_by="z.ai"),
-                Model(id=settings.GLM47_SEARCH_MODEL, created=current_time, owned_by="z.ai"),
-                Model(id=settings.GLM45_AIR_MODEL, created=current_time, owned_by="z.ai"),
+                Model(id=model_id, created=current_time, owned_by=settings.SERVICE_NAME)
+                for model_id in client.get_supported_models()
             ]
         )
-        return fallback_response
+        return JSONResponse(content=response.model_dump(exclude_none=True))
+    except Exception as exc:
+        logger.error(f"❌ 获取模型列表失败: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to list models: {exc}")
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: OpenAIRequest, authorization: str = Header(...)):
-    """Handle chat completion requests with multi-provider architecture"""
-    role = request.messages[0].role if request.messages else "unknown"
-    logger.info(f"😶‍🌫️ 收到客户端请求 - 模型: {request.model}, 流式: {request.stream}, 消息数: {len(request.messages)}, 角色: {role}, 工具数: {len(request.tools) if request.tools else 0}")
+async def chat_completions(
+    body: OpenAIRequest,
+    http_request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """直接调用上游适配器处理请求。"""
+    source_info = detect_request_source(
+        http_request,
+        protocol_hint="openai",
+        model_hint=body.model,
+    )
+    source_prefix = format_request_source(source_info)
+    started_at = time.perf_counter()
 
-    # 获取提供商信息（用于统计）
-    provider = "unknown"
+    role = body.messages[0].role if body.messages else "unknown"
+    logger.info(
+        f"{source_prefix} 😶‍🌫️ 收到客户端请求 - 模型: {body.model}, 流式: {body.stream}, 消息数: {len(body.messages)}, 角色: {role}, 工具数: {len(body.tools) if body.tools else 0}"
+    )
 
     try:
-        # Validate API key (skip if SKIP_AUTH_TOKEN is enabled)
         if not settings.SKIP_AUTH_TOKEN:
-            if not authorization.startswith("Bearer "):
+            if not authorization or not authorization.startswith("Bearer "):
                 raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
             api_key = authorization[7:]
             if api_key != settings.AUTH_TOKEN:
                 raise HTTPException(status_code=401, detail="Invalid API key")
 
-        # 使用多提供商路由器处理请求
-        router_instance = get_provider_router_instance()
+        client = get_upstream_client()
+        result = await client.chat_completion(body)
 
-        # 从路由器获取提供商信息
-        provider_info = router_instance.get_provider_for_model(request.model)
-        if provider_info:
-            provider = provider_info.get("provider", "unknown")
-
-        result = await router_instance.route_request(request)
-
-        # 检查是否有错误
         if isinstance(result, dict) and "error" in result:
             error_info = result["error"]
+            error_message = error_info.get("message", "Unknown upstream error")
+            error_code = error_info.get("code")
+            status_code = 404 if error_code == "model_not_found" else 500
+            raise HTTPException(status_code=status_code, detail=error_message)
 
-            if error_info.get("code") == "model_not_found":
-                raise HTTPException(status_code=404, detail=error_info["message"])
-            else:
-                raise HTTPException(status_code=500, detail=error_info["message"])
-
-        # 处理响应
-        if request.stream:
-            # 流式响应
-            if hasattr(result, '__aiter__'):
-                # 结果是异步生成器
+        if body.stream:
+            if hasattr(result, "__aiter__"):
                 return StreamingResponse(
-                    result,
+                    wrap_openai_stream_with_logging(
+                        result,
+                        provider="zai",
+                        model=body.model,
+                        source_info=source_info,
+                        started_at=started_at,
+                    ),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
                         "Connection": "keep-alive",
                         "Access-Control-Allow-Origin": "*",
-                    }
+                    },
                 )
-            else:
-                # 结果是字典，可能包含错误
-                raise HTTPException(status_code=500, detail="Expected streaming response but got non-streaming result")
-        else:
-            # 非流式响应
-            if isinstance(result, dict):
-                return JSONResponse(content=result)
-            else:
-                # 如果是异步生成器，需要收集所有内容
-                return await handle_non_stream_response(result, request)
+            raise HTTPException(
+                status_code=500,
+                detail="Expected streaming response but got non-streaming result",
+            )
 
-    except HTTPException as http_exc:
-        # 重新抛出 HTTP 异常
+        if isinstance(result, dict):
+            usage = extract_openai_usage(result)
+            await write_request_log(
+                provider="zai",
+                model=body.model,
+                source_info=source_info,
+                success="error" not in result,
+                started_at=started_at,
+                status_code=200 if "error" not in result else 500,
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                error_message=(result.get("error") or {}).get("message") if isinstance(result, dict) else None,
+            )
+            return JSONResponse(content=result)
+
+        response = await handle_non_stream_response(result, body)
+        response_body = json.loads(response.body)
+        usage = extract_openai_usage(response_body)
+        await write_request_log(
+            provider="zai",
+            model=body.model,
+            source_info=source_info,
+            success=True,
+            started_at=started_at,
+            status_code=200,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+        )
+        return response
+
+    except HTTPException as exc:
+        await write_request_log(
+            provider="zai",
+            model=body.model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=exc.status_code,
+            error_message=str(exc.detail),
+        )
         raise
-    except Exception as e:
-        logger.error(f"❌ 请求处理失败: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    except Exception as exc:
+        logger.error(f"{source_prefix} ❌ 请求处理失败: {exc}")
+        await write_request_log(
+            provider="zai",
+            model=body.model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=500,
+            error_message=str(exc),
+        )
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}")
