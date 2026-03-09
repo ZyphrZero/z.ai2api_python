@@ -16,21 +16,119 @@ from app.utils.request_source import RequestSourceInfo
 logger = get_logger()
 
 
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _merge_usage(
+    current: Dict[str, int],
+    update: Dict[str, int],
+    *,
+    include_cache_in_total: bool,
+) -> Dict[str, int]:
+    merged = dict(current)
+
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_tokens",
+        "cache_read_tokens",
+    ):
+        value = _coerce_int(update.get(key))
+        if value > 0:
+            merged[key] = value
+
+    total_tokens = _coerce_int(update.get("total_tokens"))
+    if total_tokens > 0:
+        merged["total_tokens"] = total_tokens
+        return merged
+
+    merged["total_tokens"] = (
+        merged["input_tokens"] + merged["output_tokens"]
+    )
+    if include_cache_in_total:
+        merged["total_tokens"] += (
+            merged["cache_creation_tokens"] + merged["cache_read_tokens"]
+        )
+
+    return merged
+
+
 def extract_openai_usage(response: Dict[str, Any]) -> Dict[str, int]:
     """Extract usage from an OpenAI-compatible response payload."""
     usage = response.get("usage") or {}
+    prompt_details = usage.get("prompt_tokens_details") or {}
+    input_details = usage.get("input_token_details") or {}
+
+    input_tokens = _coerce_int(
+        usage.get("prompt_tokens") or usage.get("input_tokens")
+    )
+    output_tokens = _coerce_int(
+        usage.get("completion_tokens") or usage.get("output_tokens")
+    )
+    cache_creation_tokens = _coerce_int(
+        usage.get("cache_creation_input_tokens")
+        or prompt_details.get("cache_creation_tokens")
+        or input_details.get("cache_creation_input_tokens")
+        or input_details.get("cache_creation_tokens")
+    )
+    cache_read_tokens = _coerce_int(
+        usage.get("cache_read_input_tokens")
+        or prompt_details.get("cached_tokens")
+        or prompt_details.get("cache_read_tokens")
+        or input_details.get("cached_tokens")
+        or input_details.get("cache_read_input_tokens")
+        or input_details.get("cache_read_tokens")
+    )
+    total_tokens = _coerce_int(usage.get("total_tokens"))
+    if total_tokens <= 0:
+        total_tokens = input_tokens + output_tokens
+
     return {
-        "input_tokens": int(usage.get("prompt_tokens") or 0),
-        "output_tokens": int(usage.get("completion_tokens") or 0),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "total_tokens": total_tokens,
     }
 
 
 def extract_claude_usage(response: Dict[str, Any]) -> Dict[str, int]:
     """Extract usage from a Claude-compatible response payload."""
     usage = response.get("usage") or {}
+    input_tokens = _coerce_int(
+        usage.get("input_tokens") or usage.get("prompt_tokens")
+    )
+    output_tokens = _coerce_int(
+        usage.get("output_tokens") or usage.get("completion_tokens")
+    )
+    cache_creation_tokens = _coerce_int(
+        usage.get("cache_creation_input_tokens")
+        or usage.get("cache_creation_tokens")
+    )
+    cache_read_tokens = _coerce_int(
+        usage.get("cache_read_input_tokens")
+        or usage.get("cached_tokens")
+        or usage.get("cache_read_tokens")
+    )
+    total_tokens = _coerce_int(usage.get("total_tokens"))
+    if total_tokens <= 0:
+        total_tokens = (
+            input_tokens
+            + output_tokens
+            + cache_creation_tokens
+            + cache_read_tokens
+        )
+
     return {
-        "input_tokens": int(usage.get("input_tokens") or 0),
-        "output_tokens": int(usage.get("output_tokens") or 0),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "total_tokens": total_tokens,
     }
 
 
@@ -45,6 +143,9 @@ async def write_request_log(
     first_token_time: float = 0.0,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    total_tokens: Optional[int] = None,
     error_message: Optional[str] = None,
 ) -> None:
     """Persist a request log entry without breaking request handling."""
@@ -64,6 +165,9 @@ async def write_request_log(
             first_token_time=first_token_time,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            total_tokens=total_tokens,
             error_message=error_message,
         )
     except Exception as exc:
@@ -93,7 +197,13 @@ async def wrap_openai_stream_with_logging(
     status_code = 200
     error_message: Optional[str] = None
     first_token_time = 0.0
-    usage = {"input_tokens": 0, "output_tokens": 0}
+    usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "total_tokens": 0,
+    }
 
     try:
         async for chunk in stream:
@@ -109,16 +219,26 @@ async def wrap_openai_stream_with_logging(
                         if "error" in payload:
                             success = False
                             error = payload.get("error") or {}
-                            error_message = error.get("message") or "Unknown stream error"
+                            error_message = (
+                                error.get("message")
+                                or "Unknown stream error"
+                            )
                             status_code = int(error.get("code") or 500)
                         else:
-                            if not first_token_time and _openai_payload_has_output(payload):
+                            if (
+                                not first_token_time
+                                and _openai_payload_has_output(payload)
+                            ):
                                 first_token_time = max(
                                     0.0,
                                     time.perf_counter() - started_at,
                                 )
                             if payload.get("usage"):
-                                usage = extract_openai_usage(payload)
+                                usage = _merge_usage(
+                                    usage,
+                                    extract_openai_usage(payload),
+                                    include_cache_in_total=False,
+                                )
 
             yield chunk
     except Exception as exc:
@@ -137,6 +257,9 @@ async def wrap_openai_stream_with_logging(
             first_token_time=first_token_time,
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
+            cache_creation_tokens=usage["cache_creation_tokens"],
+            cache_read_tokens=usage["cache_read_tokens"],
+            total_tokens=usage["total_tokens"],
             error_message=error_message,
         )
 
@@ -155,7 +278,13 @@ async def wrap_claude_stream_with_logging(
     status_code = 200
     error_message: Optional[str] = None
     first_token_time = 0.0
-    output_tokens = 0
+    usage = {
+        "input_tokens": input_tokens,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "total_tokens": input_tokens,
+    }
     current_event: Optional[str] = None
 
     try:
@@ -172,9 +301,11 @@ async def wrap_claude_stream_with_logging(
                 if isinstance(payload, dict):
                     if current_event == "content_block_delta" and not first_token_time:
                         first_token_time = max(0.0, time.perf_counter() - started_at)
-                    elif current_event == "message_delta":
-                        output_tokens = int(
-                            ((payload.get("usage") or {}).get("output_tokens")) or 0
+                    if payload.get("usage"):
+                        usage = _merge_usage(
+                            usage,
+                            extract_claude_usage(payload),
+                            include_cache_in_total=True,
                         )
                     elif current_event == "error":
                         success = False
@@ -197,7 +328,10 @@ async def wrap_claude_stream_with_logging(
             started_at=started_at,
             status_code=status_code,
             first_token_time=first_token_time,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cache_creation_tokens=usage["cache_creation_tokens"],
+            cache_read_tokens=usage["cache_read_tokens"],
+            total_tokens=usage["total_tokens"],
             error_message=error_message,
         )

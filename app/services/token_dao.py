@@ -2,14 +2,14 @@
 Token 数据访问层 (DAO)
 提供 Token 的 CRUD 操作和查询功能
 """
-import aiosqlite
-import sqlite3
-from typing import List, Optional, Dict, Tuple
-from datetime import datetime
-from contextlib import asynccontextmanager
 import os
+import sqlite3
+from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.models.token_db import SQL_CREATE_TABLES, DB_PATH
+import aiosqlite
+
+from app.models.token_db import DB_PATH, SQL_CREATE_TABLES
 from app.utils.logger import logger
 
 
@@ -127,7 +127,13 @@ class TokenDAO:
             logger.error(f"❌ 添加 Token 失败: {e}")
             return None
 
-    async def get_tokens_by_provider(self, provider: str, enabled_only: bool = True) -> List[Dict]:
+    async def get_tokens_by_provider(
+        self,
+        provider: str,
+        enabled_only: bool = True,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict]:
         """
         获取指定提供商的所有 Token
 
@@ -150,6 +156,10 @@ class TokenDAO:
                     query += " AND t.is_enabled = 1"
 
                 query += " ORDER BY t.priority DESC, t.id ASC"
+
+                if limit is not None:
+                    query += " LIMIT ? OFFSET ?"
+                    params.extend([limit, max(0, offset)])
 
                 cursor = await conn.execute(query, params)
                 rows = await cursor.fetchall()
@@ -216,6 +226,29 @@ class TokenDAO:
                 logger.info(f"✅ 删除 Token: id={token_id}")
         except Exception as e:
             logger.error(f"❌ 删除 Token 失败: {e}")
+
+    async def delete_tokens_by_ids(self, token_ids: List[int]) -> int:
+        """批量删除 Token（级联删除统计数据）"""
+        if not token_ids:
+            return 0
+
+        try:
+            placeholders = ",".join("?" for _ in token_ids)
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    f"DELETE FROM tokens WHERE id IN ({placeholders})",
+                    token_ids,
+                )
+                cursor = await conn.execute("SELECT changes()")
+                row = await cursor.fetchone()
+                await conn.commit()
+
+            deleted_count = int(row[0] if row else 0)
+            logger.info(f"✅ 批量删除 Token: {deleted_count} 个")
+            return deleted_count
+        except Exception as e:
+            logger.error(f"❌ 批量删除 Token 失败: {e}")
+            return 0
 
     async def delete_tokens_by_provider(self, provider: str):
         """删除指定提供商的所有 Token"""
@@ -326,6 +359,41 @@ class TokenDAO:
         logger.info(f"✅ 替换 Token 完成: {provider} - {added_count} 个")
         return added_count
 
+    async def remove_duplicate_tokens(self, provider: Optional[str] = None) -> int:
+        """
+        删除重复 Token，保留每个 provider/token 组合中排序靠前的一条记录。
+
+        正常情况下唯一约束会阻止重复数据，这里主要处理历史数据或手工导入异常。
+        """
+        try:
+            tokens = (
+                await self.get_tokens_by_provider(provider, enabled_only=False)
+                if provider
+                else await self.get_all_tokens(enabled_only=False)
+            )
+
+            seen_keys: set[tuple[str, str]] = set()
+            duplicate_ids: list[int] = []
+
+            for token_record in tokens:
+                token_value = str(token_record.get("token") or "").strip()
+                token_provider = str(token_record.get("provider") or "")
+                key = (token_provider, token_value)
+
+                if key in seen_keys:
+                    duplicate_ids.append(int(token_record["id"]))
+                    continue
+
+                seen_keys.add(key)
+
+            deleted_count = await self.delete_tokens_by_ids(duplicate_ids)
+            if deleted_count > 0:
+                logger.info(f"✅ 已清理重复 Token: {deleted_count} 个")
+            return deleted_count
+        except Exception as e:
+            logger.error(f"❌ 清理重复 Token 失败: {e}")
+            return 0
+
     # ==================== 实用方法 ====================
 
     async def get_token_by_value(self, provider: str, token: str) -> Optional[Dict]:
@@ -364,6 +432,72 @@ class TokenDAO:
         except Exception as e:
             logger.error(f"❌ 获取提供商统计失败: {e}")
             return {}
+
+    async def get_provider_token_counts(self, provider: str) -> Dict[str, int]:
+        """聚合提供商的 Token 数量与类型分布。"""
+        try:
+            async with self.get_connection() as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) as total_tokens,
+                        SUM(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as enabled_tokens,
+                        SUM(CASE WHEN token_type = 'user' THEN 1 ELSE 0 END) as user_tokens,
+                        SUM(CASE WHEN token_type = 'guest' THEN 1 ELSE 0 END) as guest_tokens,
+                        SUM(CASE WHEN token_type = 'unknown' THEN 1 ELSE 0 END) as unknown_tokens
+                    FROM tokens
+                    WHERE provider = ?
+                    """,
+                    (provider,),
+                )
+                row = await cursor.fetchone()
+
+            if not row:
+                return {
+                    "total_tokens": 0,
+                    "enabled_tokens": 0,
+                    "user_tokens": 0,
+                    "guest_tokens": 0,
+                    "unknown_tokens": 0,
+                }
+
+            return {
+                "total_tokens": int(row["total_tokens"] or 0),
+                "enabled_tokens": int(row["enabled_tokens"] or 0),
+                "user_tokens": int(row["user_tokens"] or 0),
+                "guest_tokens": int(row["guest_tokens"] or 0),
+                "unknown_tokens": int(row["unknown_tokens"] or 0),
+            }
+        except Exception as e:
+            logger.error(f"❌ 获取 Token 数量统计失败: {e}")
+            return {
+                "total_tokens": 0,
+                "enabled_tokens": 0,
+                "user_tokens": 0,
+                "guest_tokens": 0,
+                "unknown_tokens": 0,
+            }
+
+    async def count_tokens_by_provider(
+        self,
+        provider: str,
+        enabled_only: bool = False,
+    ) -> int:
+        """统计提供商下的 Token 总数。"""
+        try:
+            async with self.get_connection() as conn:
+                query = "SELECT COUNT(*) AS total_count FROM tokens WHERE provider = ?"
+                params: List[object] = [provider]
+                if enabled_only:
+                    query += " AND is_enabled = 1"
+
+                cursor = await conn.execute(query, params)
+                row = await cursor.fetchone()
+
+            return int(row["total_count"] or 0) if row else 0
+        except Exception as e:
+            logger.error(f"❌ 统计 Token 总数失败: {e}")
+            return 0
 
     # ==================== Token 验证操作 ====================
 
@@ -413,6 +547,87 @@ class TokenDAO:
             logger.error(f"❌ 验证 Token 失败: {e}")
             return False
 
+    async def validate_tokens_detailed(self, provider: str = "zai") -> Dict[str, Any]:
+        """
+        批量验证所有 Token，并返回详细结果。
+
+        Returns:
+            {
+                "checked": 数量,
+                "valid": 数量,
+                "guest": 数量,
+                "invalid": 数量,
+                "invalid_token_ids": [id, ...],
+            }
+        """
+        try:
+            tokens = await self.get_tokens_by_provider(provider, enabled_only=False)
+
+            if not tokens:
+                logger.warning(f"⚠️ 没有需要验证的 {provider} Token")
+                return {
+                    "checked": 0,
+                    "valid": 0,
+                    "guest": 0,
+                    "invalid": 0,
+                    "invalid_token_ids": [],
+                }
+
+            logger.info(f"🔍 开始批量验证 {len(tokens)} 个 {provider} Token...")
+
+            from app.utils.token_pool import ZAITokenValidator
+
+            stats: Dict[str, Any] = {
+                "checked": len(tokens),
+                "valid": 0,
+                "guest": 0,
+                "invalid": 0,
+                "invalid_token_ids": [],
+            }
+
+            for token_record in tokens:
+                token_id = int(token_record["id"])
+                token = str(token_record["token"])
+
+                token_type, is_valid, error_msg = await ZAITokenValidator.validate_token(
+                    token
+                )
+                await self.update_token_type(token_id, token_type)
+
+                if token_type == "user" and is_valid:
+                    stats["valid"] += 1
+                elif token_type == "guest":
+                    stats["guest"] += 1
+                    stats["invalid_token_ids"].append(token_id)
+                else:
+                    stats["invalid"] += 1
+                    stats["invalid_token_ids"].append(token_id)
+                    if error_msg:
+                        logger.warning(
+                            "⚠️ Token 验证失败: id={}, type={}, error={}",
+                            token_id,
+                            token_type,
+                            error_msg,
+                        )
+
+            logger.info(
+                "✅ 批量验证完成: 有效 {}, 匿名 {}, 无效 {}",
+                stats["valid"],
+                stats["guest"],
+                stats["invalid"],
+            )
+            return stats
+
+        except Exception as e:
+            logger.error(f"❌ 批量验证失败: {e}")
+            return {
+                "checked": 0,
+                "valid": 0,
+                "guest": 0,
+                "invalid": 0,
+                "invalid_token_ids": [],
+            }
+
     async def validate_all_tokens(self, provider: str = "zai") -> Dict[str, int]:
         """
         批量验证所有 Token
@@ -423,42 +638,12 @@ class TokenDAO:
         Returns:
             统计结果 {"valid": 数量, "guest": 数量, "invalid": 数量}
         """
-        try:
-            tokens = await self.get_tokens_by_provider(provider, enabled_only=False)
-
-            if not tokens:
-                logger.warning(f"⚠️ 没有需要验证的 {provider} Token")
-                return {"valid": 0, "guest": 0, "invalid": 0}
-
-            logger.info(f"🔍 开始批量验证 {len(tokens)} 个 {provider} Token...")
-
-            stats = {"valid": 0, "guest": 0, "invalid": 0}
-
-            for token_record in tokens:
-                token_id = token_record["id"]
-                is_valid = await self.validate_and_update_token(token_id)
-
-                # 重新查询更新后的类型
-                async with self.get_connection() as conn:
-                    cursor = await conn.execute("""
-                        SELECT token_type FROM tokens WHERE id = ?
-                    """, (token_id,))
-                    row = await cursor.fetchone()
-                    token_type = row["token_type"] if row else "unknown"
-
-                if token_type == "user":
-                    stats["valid"] += 1
-                elif token_type == "guest":
-                    stats["guest"] += 1
-                else:
-                    stats["invalid"] += 1
-
-            logger.info(f"✅ 批量验证完成: 有效 {stats['valid']}, 匿名 {stats['guest']}, 无效 {stats['invalid']}")
-            return stats
-
-        except Exception as e:
-            logger.error(f"❌ 批量验证失败: {e}")
-            return {"valid": 0, "guest": 0, "invalid": 0}
+        stats = await self.validate_tokens_detailed(provider)
+        return {
+            "valid": int(stats.get("valid", 0) or 0),
+            "guest": int(stats.get("guest", 0) or 0),
+            "invalid": int(stats.get("invalid", 0) or 0),
+        }
 
 
 # 全局单例

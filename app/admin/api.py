@@ -2,13 +2,26 @@
 管理后台 API 接口
 用于 htmx 调用的 HTML 片段返回
 """
-from fastapi import APIRouter, Request
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 from datetime import datetime
-from app.utils.logger import logger
-import os
+from html import escape
+from pathlib import Path
+import re
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+
+from app.admin.auth import require_auth
+from app.admin.config_manager import (
+    read_env_content,
+    reset_env_to_example,
+    save_form_config,
+    save_source_config,
+)
+from app.admin.stats import collect_admin_stats, normalize_trend_window
 from app.services.request_log_dao import get_request_log_dao
+from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/api", tags=["admin-api"])
 templates = Jinja2Templates(directory="app/templates")
@@ -80,9 +93,10 @@ async def logout(request: Request):
 
 async def reload_settings():
     """热重载配置（重新加载环境变量并更新 settings 对象）"""
+    from dotenv import load_dotenv
+
     from app.core.config import settings
     from app.utils.logger import setup_logger
-    from dotenv import load_dotenv
 
     # 重新加载 .env 文件
     load_dotenv(override=True)
@@ -98,6 +112,157 @@ async def reload_settings():
     setup_logger(log_dir="logs", debug_mode=settings.DEBUG_LOGGING)
 
     logger.info(f"🔄 配置已热重载 (DEBUG_LOGGING={settings.DEBUG_LOGGING})")
+
+
+def _build_alert(
+    message: str,
+    *,
+    title: str,
+    level: str,
+    status_code: int = 200,
+) -> HTMLResponse:
+    level_classes = {
+        "success": "bg-green-100 border-green-400 text-green-700",
+        "warning": "bg-yellow-100 border-yellow-400 text-yellow-700",
+        "error": "bg-red-100 border-red-400 text-red-700",
+        "info": "bg-blue-100 border-blue-400 text-blue-700",
+    }
+    classes = level_classes.get(level, level_classes["info"])
+    safe_title = escape(title)
+    safe_message = escape(message)
+    return HTMLResponse(
+        f"""
+        <div class="{classes} border px-4 py-3 rounded relative" role="alert">
+            <strong class="font-bold">{safe_title}</strong>
+            <span class="block sm:inline">{safe_message}</span>
+        </div>
+        """,
+        status_code=status_code,
+    )
+
+
+def _with_hx_trigger(response: HTMLResponse, event_name: str) -> HTMLResponse:
+    response.headers["HX-Trigger"] = event_name
+    return response
+
+
+def _get_int_query_param(
+    request: Request,
+    name: str,
+    default: int,
+    *,
+    minimum: int = 1,
+    maximum: Optional[int] = None,
+) -> int:
+    """解析查询参数中的正整数，非法值回退到默认值。"""
+    raw_value = request.query_params.get(name)
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return default
+
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+def _build_pagination(
+    *,
+    total_items: int,
+    page: int,
+    page_size: int,
+) -> dict:
+    """构建分页上下文。"""
+    total_items = max(0, int(total_items))
+    page_size = max(1, int(page_size))
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    current_page = min(max(1, int(page)), total_pages)
+
+    if total_items == 0:
+        start_item = 0
+        end_item = 0
+    else:
+        start_item = (current_page - 1) * page_size + 1
+        end_item = min(total_items, current_page * page_size)
+
+    return {
+        "current_page": current_page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "has_previous": current_page > 1,
+        "has_next": current_page < total_pages,
+        "previous_page": max(1, current_page - 1),
+        "next_page": min(total_pages, current_page + 1),
+        "start_item": start_item,
+        "end_item": end_item,
+    }
+
+
+def _normalize_display_value(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    return normalized
+
+
+def _is_redundant_source(source: str, client_name: str) -> bool:
+    normalized_source = _normalize_display_value(source)
+    normalized_client = _normalize_display_value(client_name)
+    if not normalized_source:
+        return True
+    if not normalized_client:
+        return False
+    return normalized_source == normalized_client
+
+
+def _humanize_protocol(protocol: str) -> str:
+    normalized = str(protocol or "").strip().lower()
+    if normalized == "openai":
+        return "OpenAI"
+    if normalized == "anthropic":
+        return "Anthropic"
+    if normalized == "unknown":
+        return "Unknown"
+    return normalized or "Unknown"
+
+
+@router.get(
+    "/dashboard/usage-trend",
+    response_class=JSONResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def get_dashboard_usage_trend(request: Request):
+    """返回仪表盘趋势图数据。"""
+    trend_window = normalize_trend_window(
+        request.query_params.get("window")
+    )
+    dao = get_request_log_dao()
+    trend_points = await dao.get_provider_usage_trend(
+        DEFAULT_TOKEN_NAMESPACE,
+        window=trend_window,
+    )
+    return JSONResponse(
+        {
+            "window": trend_window,
+            "points": trend_points,
+        }
+    )
+
+
+def _validate_directory_path(source_dir: str) -> str:
+    if not source_dir:
+        raise ValueError("请先填写服务端可访问的本地目录路径。")
+
+    source_path = Path(source_dir).expanduser()
+    if not source_path.exists():
+        raise ValueError(f"导入目录不存在: {source_path}")
+    if not source_path.is_dir():
+        raise ValueError(f"导入路径不是目录: {source_path}")
+
+    return str(source_path)
 
 
 @router.get("/token-pool", response_class=HTMLResponse)
@@ -165,180 +330,201 @@ async def get_token_pool_status(request: Request):
 async def get_recent_logs(request: Request):
     """获取最近的请求日志（HTML 片段）"""
     dao = get_request_log_dao()
-    rows = await dao.get_recent_logs(limit=20)
+    page_size = _get_int_query_param(
+        request,
+        "page_size",
+        12,
+        maximum=50,
+    )
+    requested_page = _get_int_query_param(request, "page", 1, maximum=100000)
+    total_count = await dao.count_logs()
+    pagination = _build_pagination(
+        total_items=total_count,
+        page=requested_page,
+        page_size=page_size,
+    )
+
+    rows = await dao.get_recent_logs(
+        limit=page_size,
+        offset=(pagination["current_page"] - 1) * page_size,
+    )
     logs = []
     for row in rows:
+        timestamp = (
+            row.get("timestamp")
+            or row.get("created_at")
+            or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        success = bool(row.get("success"))
+        status_code = int(
+            row.get("status_code") or (200 if success else 500)
+        )
+        duration_value = float(row.get("duration") or 0.0)
+        first_token_value = float(row.get("first_token_time") or 0.0)
+        source = row.get("source") or "unknown"
+        client_name = row.get("client_name") or "Unknown"
+        provider = row.get("provider") or "-"
+        source_display = (
+            ""
+            if _is_redundant_source(source, client_name)
+            else source
+        )
+        provider_display = "" if provider == "zai" else provider
         logs.append(
             {
-                "timestamp": row.get("timestamp") or row.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp": timestamp,
                 "endpoint": row.get("endpoint") or "-",
                 "model": row.get("model") or "-",
-                "status": row.get("status_code") or (200 if row.get("success") else 500),
-                "duration": f"{float(row.get('duration') or 0):.2f}s",
-                "provider": row.get("provider") or "-",
-                "source": row.get("source") or "unknown",
+                "provider": provider,
+                "provider_display": provider_display,
+                "source": source,
+                "source_display": source_display,
                 "protocol": row.get("protocol") or "unknown",
-                "client_name": row.get("client_name") or "Unknown",
+                "protocol_display": _humanize_protocol(
+                    row.get("protocol") or "unknown"
+                ),
+                "client_name": client_name,
+                "success": success,
+                "status_code": status_code,
+                "duration_display": f"{duration_value:.2f}s",
+                "first_token_display": (
+                    f"{first_token_value:.2f}s"
+                    if first_token_value > 0
+                    else "--"
+                ),
+                "input_tokens": int(row.get("input_tokens") or 0),
+                "output_tokens": int(row.get("output_tokens") or 0),
+                "cache_creation_tokens": int(
+                    row.get("cache_creation_tokens") or 0
+                ),
+                "cache_read_tokens": int(
+                    row.get("cache_read_tokens") or 0
+                ),
+                "error_message": row.get("error_message") or "",
             }
         )
 
     context = {
         "request": request,
         "logs": logs,
+        "page": pagination,
     }
 
     return templates.TemplateResponse("components/recent_logs.html", context)
 
 
-@router.post("/config/save")
+@router.post("/config/save", dependencies=[Depends(require_auth)])
 async def save_config(request: Request):
-    """保存配置到 .env 文件并热重载"""
+    """保存结构化配置并热重载。"""
     try:
         form_data = await request.form()
-
-        # 构建 .env 内容
-        env_lines = [
-            "# API 服务配置文件",
-            "",
-            "# ========== 服务器配置 ==========",
-            f"SERVICE_NAME={form_data.get('service_name', 'api-proxy-server')}",
-            f"LISTEN_PORT={form_data.get('listen_port', '8080')}",
-            f"DEBUG_LOGGING={'true' if 'debug_logging' in form_data else 'false'}",
-            "",
-            "# ========== 认证配置 ==========",
-            f"AUTH_TOKEN={form_data.get('auth_token', 'sk-your-api-key')}",
-            f"SKIP_AUTH_TOKEN={'true' if 'skip_auth_token' in form_data else 'false'}",
-            f"ANONYMOUS_MODE={'true' if 'anonymous_mode' in form_data else 'false'}",
-            "",
-            "# ========== 功能配置 ==========",
-            f"TOOL_SUPPORT={'true' if 'tool_support' in form_data else 'false'}",
-            f"SCAN_LIMIT={form_data.get('scan_limit', '200000')}",
-            "",
-            "# ========== Token 池配置 ==========",
-            f"TOKEN_FAILURE_THRESHOLD={form_data.get('token_failure_threshold', '3')}",
-            f"TOKEN_RECOVERY_TIMEOUT={form_data.get('token_recovery_timeout', '1800')}",
-        ]
-
-        # 写入 .env 文件
-        with open(".env", "w", encoding="utf-8") as f:
-            f.write("\n".join(env_lines))
-
-        logger.info("✅ 配置文件已保存")
-
-        # 热重载配置
-        await reload_settings()
-
-        return HTMLResponse("""
-        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
-            <strong class="font-bold">成功！</strong>
-            <span class="block sm:inline">配置已保存并重载成功</span>
-        </div>
-        """)
-
-    except Exception as e:
-        logger.error(f"❌ 配置保存失败: {str(e)}")
-        return HTMLResponse(f"""
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-            <strong class="font-bold">错误！</strong>
-            <span class="block sm:inline">保存失败: {str(e)}</span>
-        </div>
-        """)
+        await save_form_config(
+            form_data,
+            reload_callback=reload_settings,
+        )
+        logger.info("✅ 结构化配置已保存")
+        return _with_hx_trigger(
+            _build_alert(
+                "配置已保存并热重载，页面即将刷新。",
+                title="保存成功！",
+                level="success",
+            ),
+            "admin-config-refresh",
+        )
+    except ValueError as exc:
+        return _build_alert(
+            str(exc),
+            title="校验失败！",
+            level="error",
+            status_code=400,
+        )
+    except Exception as exc:
+        logger.error(f"❌ 配置保存失败: {exc}")
+        return _build_alert(
+            f"保存失败: {exc}",
+            title="错误！",
+            level="error",
+            status_code=500,
+        )
 
 
-@router.post("/config/reset")
+@router.post("/config/source", dependencies=[Depends(require_auth)])
+async def save_config_source(request: Request):
+    """保存 .env 源文件并热重载。"""
+    try:
+        form_data = await request.form()
+        await save_source_config(
+            str(form_data.get("env_content", "")),
+            reload_callback=reload_settings,
+        )
+        logger.info("✅ 配置源文件已保存")
+        return _with_hx_trigger(
+            _build_alert(
+                ".env 源文件已保存并热重载，页面即将刷新。",
+                title="保存成功！",
+                level="success",
+            ),
+            "admin-config-refresh",
+        )
+    except ValueError as exc:
+        return _build_alert(
+            str(exc),
+            title="源文件校验失败！",
+            level="error",
+            status_code=400,
+        )
+    except Exception as exc:
+        logger.error(f"❌ 源文件保存失败: {exc}")
+        return _build_alert(
+            f"源文件保存失败: {exc}",
+            title="错误！",
+            level="error",
+            status_code=500,
+        )
+
+
+@router.post("/config/reset", dependencies=[Depends(require_auth)])
 async def reset_config():
     """将配置重置为 .env.example 并热重载。"""
     try:
-        with open(".env.example", "r", encoding="utf-8") as source:
-            env_content = source.read().strip()
-
-        with open(".env", "w", encoding="utf-8") as target:
-            target.write(env_content + "\n")
-
-        await reload_settings()
+        await reset_env_to_example(reload_callback=reload_settings)
         logger.info("✅ 配置已重置为 .env.example 默认值")
-
-        response = HTMLResponse("""
-        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
-            <strong class="font-bold">已重置！</strong>
-            <span class="block sm:inline">配置已恢复为 .env.example 默认值，页面即将刷新。</span>
-        </div>
-        """)
-        response.headers["HX-Refresh"] = "true"
-        return response
+        return _with_hx_trigger(
+            _build_alert(
+                "配置已恢复为 .env.example 默认值，页面即将刷新。",
+                title="已重置！",
+                level="success",
+            ),
+            "admin-config-refresh",
+        )
     except FileNotFoundError:
         logger.error("❌ 未找到 .env.example，无法重置配置")
-        return HTMLResponse("""
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-            <strong class="font-bold">错误！</strong>
-            <span class="block sm:inline">未找到 .env.example，无法重置配置。</span>
-        </div>
-        """, status_code=404)
-    except Exception as e:
-        logger.error(f"❌ 配置重置失败: {str(e)}")
-        return HTMLResponse(f"""
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-            <strong class="font-bold">错误！</strong>
-            <span class="block sm:inline">重置失败: {str(e)}</span>
-        </div>
-        """, status_code=500)
+        return _build_alert(
+            "未找到 .env.example，无法重置配置。",
+            title="错误！",
+            level="error",
+            status_code=404,
+        )
+    except Exception as exc:
+        logger.error(f"❌ 配置重置失败: {exc}")
+        return _build_alert(
+            f"重置失败: {exc}",
+            title="错误！",
+            level="error",
+            status_code=500,
+        )
 
 
-@router.get("/env-preview")
+@router.get("/env-preview", dependencies=[Depends(require_auth)])
 async def get_env_preview():
     """获取 .env 文件预览"""
     try:
-        with open(".env", "r", encoding="utf-8") as f:
-            content = f.read()
-        return HTMLResponse(f"<pre>{content}</pre>")
-    except FileNotFoundError:
-        return HTMLResponse("<pre># .env 文件不存在</pre>")
-    except Exception as e:
-        return HTMLResponse(f"<pre># 读取失败: {str(e)}</pre>")
-
-
-@router.get("/channel-status", response_class=HTMLResponse)
-async def get_channel_status(request: Request):
-    """获取当前通道状态详情（HTML 片段）。"""
-    from app.services.token_dao import get_token_dao
-
-    dao = get_token_dao()
-
-    stats = await dao.get_provider_stats(DEFAULT_TOKEN_NAMESPACE)
-    tokens = await dao.get_tokens_by_provider(
-        DEFAULT_TOKEN_NAMESPACE,
-        enabled_only=False,
-    )
-
-    total_requests = stats.get("total_requests", 0) or 0
-    successful_requests = stats.get("successful_requests", 0) or 0
-    failed_requests = stats.get("failed_requests", 0) or 0
-
-    if total_requests > 0:
-        success_rate = f"{(successful_requests / total_requests * 100):.1f}%"
-    else:
-        success_rate = "N/A"
-
-    status = {
-        "total_tokens": stats.get("total_tokens", 0) or 0,
-        "enabled_tokens": stats.get("enabled_tokens", 0) or 0,
-        "user_tokens": sum(1 for token in tokens if token.get("token_type") == "user"),
-        "guest_tokens": sum(1 for token in tokens if token.get("token_type") == "guest"),
-        "unknown_tokens": sum(
-            1 for token in tokens if token.get("token_type") == "unknown"
-        ),
-        "total_requests": total_requests,
-        "successful_requests": successful_requests,
-        "failed_requests": failed_requests,
-        "success_rate": success_rate,
-    }
-
-    context = {
-        "request": request,
-        "status": status,
-    }
-
-    return templates.TemplateResponse("components/channel_status.html", context)
+        content = read_env_content()
+        if not content:
+            content = "# .env 文件不存在"
+        return HTMLResponse(f"<pre>{escape(content)}</pre>")
+    except Exception as exc:
+        return HTMLResponse(f"<pre># 读取失败: {escape(str(exc))}</pre>")
 
 
 @router.get("/live-logs", response_class=HTMLResponse)
@@ -408,14 +594,33 @@ async def get_tokens_list(request: Request):
     from app.services.token_dao import get_token_dao
 
     dao = get_token_dao()
+    page_size = _get_int_query_param(
+        request,
+        "page_size",
+        20,
+        maximum=100,
+    )
+    requested_page = _get_int_query_param(request, "page", 1, maximum=100000)
+    total_count = await dao.count_tokens_by_provider(
+        DEFAULT_TOKEN_NAMESPACE,
+        enabled_only=False,
+    )
+    pagination = _build_pagination(
+        total_items=total_count,
+        page=requested_page,
+        page_size=page_size,
+    )
     tokens = await dao.get_tokens_by_provider(
         DEFAULT_TOKEN_NAMESPACE,
         enabled_only=False,
+        limit=page_size,
+        offset=(pagination["current_page"] - 1) * page_size,
     )
 
     context = {
         "request": request,
         "tokens": tokens,
+        "page": pagination,
     }
 
     return templates.TemplateResponse("components/token_list.html", context)
@@ -497,6 +702,170 @@ async def add_tokens(request: Request):
         """)
 
 
+@router.post("/tokens/import-directory", dependencies=[Depends(require_auth)])
+async def import_tokens_from_directory_api(request: Request):
+    """从本地目录导入 token 文件。"""
+    from app.core.config import settings
+    from app.services.token_automation import run_directory_import
+
+    form_data = await request.form()
+    source_dir = str(
+        form_data.get("source_dir")
+        or settings.TOKEN_AUTO_IMPORT_SOURCE_DIR
+        or ""
+    ).strip()
+    try:
+        source_dir = _validate_directory_path(source_dir)
+    except ValueError as exc:
+        return _build_alert(
+            str(exc),
+            title="导入失败！",
+            level="error",
+            status_code=400,
+        )
+
+    try:
+        summary = await run_directory_import(
+            source_dir,
+            provider=DEFAULT_TOKEN_NAMESPACE,
+            validate=True,
+        )
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        return _build_alert(
+            str(exc),
+            title="导入失败！",
+            level="error",
+            status_code=400,
+        )
+    except RuntimeError as exc:
+        return _build_alert(
+            str(exc),
+            title="导入稍后重试",
+            level="warning",
+            status_code=409,
+        )
+    except Exception as exc:
+        logger.exception(f"❌ 本地目录导入 Token 失败: {exc}")
+        return _build_alert(
+            f"目录扫描或入库异常: {exc}",
+            title="导入失败！",
+            level="error",
+            status_code=500,
+        )
+
+    if summary.imported_count > 0:
+        title = "导入成功！" if summary.failed_count == 0 else "导入完成！"
+        detail = (
+            f"目录 {summary.source_dir} 共扫描 {summary.scanned_files} 个文件，"
+            f"成功导入 {summary.imported_count} 个 Token，"
+            f"重复 {summary.duplicate_count} 个，"
+            f"无效 JSON {summary.invalid_json_count} 个，"
+            f"缺少 token {summary.missing_token_count} 个，"
+            f"验证失败 {summary.invalid_token_count} 个。"
+        )
+        return _build_alert(
+            detail,
+            title=title,
+            level="success" if summary.failed_count == 0 else "warning",
+        )
+
+    return _build_alert(
+        (
+            f"目录 {summary.source_dir} 共扫描 {summary.scanned_files} 个文件，"
+            f"其中重复 {summary.duplicate_count} 个，无效 JSON {summary.invalid_json_count} 个，"
+            f"缺少 token {summary.missing_token_count} 个，验证失败 {summary.invalid_token_count} 个。"
+        ),
+        title="未导入任何 Token！",
+        level="warning",
+    )
+
+
+@router.post("/tokens/auto-import/save", dependencies=[Depends(require_auth)])
+async def save_auto_import_settings(request: Request):
+    """兼容旧入口，提示用户改到配置管理页。"""
+    return _build_alert(
+        "自动导入配置入口已迁移到 /admin/config#tokens，当前页面仅保留手动执行入口。",
+        title="入口已迁移",
+        level="info",
+    )
+
+
+@router.post("/tokens/maintenance/save", dependencies=[Depends(require_auth)])
+async def save_auto_maintenance_settings(request: Request):
+    """兼容旧入口，提示用户改到配置管理页。"""
+    return _build_alert(
+        "自动维护配置入口已迁移到 /admin/config#tokens，当前页面仅保留手动执行入口。",
+        title="入口已迁移",
+        level="info",
+    )
+
+
+@router.post("/tokens/maintenance/run", dependencies=[Depends(require_auth)])
+async def run_token_maintenance_api(request: Request):
+    """立即执行一次 Token 维护。"""
+    from app.core.config import settings
+    from app.services.token_automation import run_token_maintenance
+
+    form_data = await request.form()
+    action_fields = (
+        "auto_remove_duplicates",
+        "auto_health_check",
+        "auto_delete_invalid",
+    )
+    has_explicit_actions = any(field in form_data for field in action_fields)
+
+    if has_explicit_actions:
+        remove_duplicates = "auto_remove_duplicates" in form_data
+        run_health_check = "auto_health_check" in form_data
+        delete_invalid = "auto_delete_invalid" in form_data
+    else:
+        remove_duplicates = settings.TOKEN_AUTO_REMOVE_DUPLICATES
+        run_health_check = settings.TOKEN_AUTO_HEALTH_CHECK
+        delete_invalid = settings.TOKEN_AUTO_DELETE_INVALID
+
+    if not any((remove_duplicates, run_health_check, delete_invalid)):
+        return _build_alert(
+            "当前没有可执行的维护动作，请先到 /admin/config#tokens 配置至少一个维护动作。",
+            title="未执行维护！",
+            level="warning",
+            status_code=400,
+        )
+
+    try:
+        summary = await run_token_maintenance(
+            provider=DEFAULT_TOKEN_NAMESPACE,
+            remove_duplicates=remove_duplicates,
+            run_health_check=run_health_check,
+            delete_invalid_tokens=delete_invalid,
+        )
+    except RuntimeError as exc:
+        return _build_alert(
+            str(exc),
+            title="维护稍后重试",
+            level="warning",
+            status_code=409,
+        )
+    except Exception as exc:
+        logger.exception(f"❌ 手动执行 Token 维护失败: {exc}")
+        return _build_alert(
+            f"Token 维护失败: {exc}",
+            title="维护失败！",
+            level="error",
+            status_code=500,
+        )
+
+    return _build_alert(
+        (
+            f"本次维护共去重 {summary.duplicate_removed_count} 个，"
+            f"测活 {summary.checked_count} 个（有效 {summary.valid_count} / "
+            f"匿名 {summary.guest_count} / 无效 {summary.invalid_count}），"
+            f"删除失效 Token {summary.deleted_invalid_count} 个。"
+        ),
+        title="维护完成！",
+        level="success",
+    )
+
+
 @router.post("/tokens/toggle/{token_id}")
 async def toggle_token(token_id: int, enabled: bool):
     """切换 Token 启用状态"""
@@ -568,31 +937,7 @@ async def delete_token(token_id: int):
 @router.get("/tokens/stats", response_class=HTMLResponse)
 async def get_tokens_stats(request: Request):
     """获取 Token 统计信息（HTML 片段）"""
-    from app.services.token_dao import get_token_dao
-
-    dao = get_token_dao()
-
-    stats = await dao.get_provider_stats(DEFAULT_TOKEN_NAMESPACE)
-
-    tokens = await dao.get_tokens_by_provider(
-        DEFAULT_TOKEN_NAMESPACE,
-        enabled_only=False,
-    )
-
-    user_tokens = sum(1 for t in tokens if t.get("token_type") == "user")
-    guest_tokens = sum(1 for t in tokens if t.get("token_type") == "guest")
-    unknown_tokens = sum(1 for t in tokens if t.get("token_type") == "unknown")
-
-    stats_data = {
-        "total_tokens": stats.get("total_tokens", 0) or 0,
-        "enabled_tokens": stats.get("enabled_tokens", 0) or 0,
-        "user_tokens": user_tokens,
-        "guest_tokens": guest_tokens,
-        "unknown_tokens": unknown_tokens,
-        "total_requests": stats.get("total_requests", 0) or 0,
-        "successful_requests": stats.get("successful_requests", 0) or 0,
-        "failed_requests": stats.get("failed_requests", 0) or 0,
-    }
+    stats_data = await collect_admin_stats(DEFAULT_TOKEN_NAMESPACE)
 
     context = {
         "request": request,
@@ -606,11 +951,16 @@ async def get_tokens_stats(request: Request):
 async def validate_tokens():
     """批量验证 Token"""
     from app.services.token_dao import get_token_dao
+    from app.utils.token_pool import get_token_pool
 
     dao = get_token_dao()
 
     # 执行批量验证
     stats = await dao.validate_all_tokens(DEFAULT_TOKEN_NAMESPACE)
+
+    pool = get_token_pool()
+    if pool:
+        await pool.sync_from_database(DEFAULT_TOKEN_NAMESPACE)
 
     valid_count = stats.get("valid", 0)
     guest_count = stats.get("guest", 0)
@@ -639,11 +989,16 @@ async def validate_tokens():
 async def validate_single_token(request: Request, token_id: int):
     """验证单个 Token 并返回更新后的行"""
     from app.services.token_dao import get_token_dao
+    from app.utils.token_pool import get_token_pool
 
     dao = get_token_dao()
 
     # 验证 Token
-    is_valid = await dao.validate_and_update_token(token_id)
+    await dao.validate_and_update_token(token_id)
+
+    pool = get_token_pool()
+    if pool:
+        await pool.sync_from_database(DEFAULT_TOKEN_NAMESPACE)
 
     # 获取更新后的 Token 信息
     async with dao.get_connection() as conn:

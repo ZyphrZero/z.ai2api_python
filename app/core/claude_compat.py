@@ -210,6 +210,8 @@ def build_non_stream_response(
     tool_calls: Optional[list[dict]],
     input_tokens: int,
     output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
 ) -> dict:
     """Build a Claude non-streaming message response."""
     content: list[dict] = []
@@ -235,6 +237,8 @@ def build_non_stream_response(
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation_tokens,
+            "cache_read_input_tokens": cache_read_tokens,
         },
     }
 
@@ -244,7 +248,13 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def sse_message_start(msg_id: str, model: str, input_tokens: int) -> str:
+def sse_message_start(
+    msg_id: str,
+    model: str,
+    input_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> str:
     """Create Claude message_start SSE event."""
     return sse(
         "message_start",
@@ -260,6 +270,8 @@ def sse_message_start(msg_id: str, model: str, input_tokens: int) -> str:
                 "stop_sequence": None,
                 "usage": {
                     "input_tokens": input_tokens,
+                    "cache_creation_input_tokens": cache_creation_tokens,
+                    "cache_read_input_tokens": cache_read_tokens,
                     "output_tokens": 0,
                 },
             },
@@ -300,14 +312,26 @@ def sse_content_block_stop(index: int) -> str:
     )
 
 
-def sse_message_delta(stop_reason: str, output_tokens: int) -> str:
+def sse_message_delta(
+    stop_reason: str,
+    output_tokens: int,
+    *,
+    input_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> str:
     """Create Claude message_delta SSE event."""
     return sse(
         "message_delta",
         {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {"output_tokens": output_tokens},
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_input_tokens": cache_creation_tokens,
+                "cache_read_input_tokens": cache_read_tokens,
+            },
         },
     )
 

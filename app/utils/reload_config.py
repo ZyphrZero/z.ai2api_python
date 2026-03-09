@@ -12,6 +12,10 @@ RELOAD_IGNORE_DIRS = [
     "storage",  # 忽略存储目录
     "__pycache__",  # 忽略 Python 缓存
     ".git",  # 忽略 git 目录
+    ".github",  # 忽略 GitHub 相关目录
+    ".vscode",  # 忽略 VSCode 配置目录
+    "deploy",  # 忽略部署相关目录
+    ".idea",  # 忽略 IntelliJ IDEA 配置目录
     "node_modules",  # 忽略 node_modules
     "migrations",  # 忽略数据库迁移目录
     ".pytest_cache",  # 忽略 pytest 缓存
@@ -26,6 +30,7 @@ RELOAD_IGNORE_DIRS = [
     "htmlcov",  # 忽略覆盖率报告目录
     "tests",  # 忽略测试目录
     "z-ai2api-server.pid",  # 忽略 PID 文件
+    "app\\templates" # 忽略模板目录
 ]
 
 # 忽略的文件模式（正则表达式）
@@ -85,5 +90,5 @@ RELOAD_CONFIG = {
     "reload_ignore_dirs": RELOAD_IGNORE_DIRS,
     "reload_ignore_patterns": RELOAD_IGNORE_PATTERNS,
     "reload_paths": RELOAD_WATCH_PATHS,
-    "reload_tick": 100,  # 监视频率（毫秒）
+    "reload_tick": 500,  # 监视频率（毫秒）
 }

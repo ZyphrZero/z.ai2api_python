@@ -2,184 +2,316 @@
 
 {% block title %}配置管理{% endblock %}
 
-{% block content %}
-<div class="space-y-6" x-data="{
-    showAdvanced: false,
-    tokenCount: 1,
-    saveStatus: ''
-}">
-    <!-- 页面标题 -->
-    <div class="flex items-center justify-between">
-        <h2 class="text-3xl font-bold text-gray-900">配置管理</h2>
-        <button
-            @click="showAdvanced = !showAdvanced"
-            class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md text-sm font-medium">
-            <span x-text="showAdvanced ? '隐藏高级选项' : '显示高级选项'"></span>
-        </button>
-    </div>
+{% block extra_head %}
+<style>
+    [x-cloak] {
+        display: none !important;
+    }
+    .config-grid {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+</style>
+{% endblock %}
 
-    <!-- 基础配置 -->
-    <div class="bg-white shadow rounded-lg">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h3 class="text-lg font-medium text-gray-900">基础配置</h3>
-        </div>
-        <form hx-post="/admin/api/config/save"
-              hx-target="#save-notification"
-              hx-swap="innerHTML"
-              class="p-6 space-y-6">
+{% macro section_link(section) -%}
+<button
+    type="button"
+    @click.prevent="document.getElementById('{{ section.id }}')?.scrollIntoView({ behavior: 'smooth', block: 'start' })"
+    class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+    {{ section.title }}
+</button>
+{%- endmacro %}
 
-            <!-- 服务名称 -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700">服务名称</label>
-                <input type="text"
-                       name="service_name"
-                       value="{{ config.SERVICE_NAME or 'api-proxy-server' }}"
-                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                <p class="mt-1 text-sm text-gray-500">显示在进程列表中的服务名称</p>
-            </div>
-
-            <!-- 监听端口 -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700">监听端口</label>
-                <input type="number"
-                       name="listen_port"
-                       value="{{ config.LISTEN_PORT or 8080 }}"
-                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                <p class="mt-1 text-sm text-gray-500">服务监听的端口号</p>
-            </div>
-
-            <!-- 调试模式 -->
-            <div class="flex items-center">
-                <input type="checkbox"
-                       name="debug_logging"
-                       {{ 'checked' if config.DEBUG_LOGGING else '' }}
-                       class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                <label class="ml-2 block text-sm text-gray-900">启用调试日志</label>
-            </div>
-
-            <!-- 匿名模式 -->
-            <div class="flex items-center">
-                <input type="checkbox"
-                       name="anonymous_mode"
-                       {{ 'checked' if config.ANONYMOUS_MODE else '' }}
-                       class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                <label class="ml-2 block text-sm text-gray-900">启用匿名模式（自动获取临时 Token）</label>
-            </div>
-
-            <!-- 认证配置 -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700">客户端认证密钥</label>
-                <input type="text"
-                       name="auth_token"
-                       value="{{ config.AUTH_TOKEN or 'sk-your-api-key' }}"
-                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                <p class="mt-1 text-sm text-gray-500">客户端访问本服务时使用的 API 密钥</p>
-            </div>
-
-            <!-- 跳过认证 -->
-            <div class="flex items-center">
-                <input type="checkbox"
-                       name="skip_auth_token"
-                       {{ 'checked' if config.SKIP_AUTH_TOKEN else '' }}
-                       class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                <label class="ml-2 block text-sm text-gray-900">跳过客户端认证（仅开发环境）</label>
-            </div>
-
-            <!-- 工具调用支持 -->
-            <div class="flex items-center">
-                <input type="checkbox"
-                       name="tool_support"
-                       {{ 'checked' if config.TOOL_SUPPORT else '' }}
-                       class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                <label class="ml-2 block text-sm text-gray-900">启用 Function Call（工具调用）功能</label>
-            </div>
-
-            <!-- 高级选项 -->
-            <div x-show="showAdvanced" x-transition class="border-t pt-6 space-y-6">
-                <h4 class="text-md font-medium text-gray-900">高级选项</h4>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Token 失败阈值</label>
-                    <input type="number"
-                           name="token_failure_threshold"
-                           value="{{ config.TOKEN_FAILURE_THRESHOLD or 3 }}"
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                    <p class="mt-1 text-sm text-gray-500">连续失败多少次后标记 Token 为失败状态</p>
-                </div>
-
-                <!-- Token 恢复超时 -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Token 恢复超时（秒）</label>
-                    <input type="number"
-                           name="token_recovery_timeout"
-                           value="{{ config.TOKEN_RECOVERY_TIMEOUT or 1800 }}"
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                    <p class="mt-1 text-sm text-gray-500">Token 失败后多久自动恢复（默认 1800 秒 / 30 分钟）</p>
-                </div>
-
-                <!-- 工具调用扫描限制 -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">工具调用扫描限制（字符数）</label>
-                    <input type="number"
-                           name="scan_limit"
-                           value="{{ config.SCAN_LIMIT or 200000 }}"
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                    <p class="mt-1 text-sm text-gray-500">Function Call 功能扫描的最大字符数</p>
-                </div>
-            </div>
-
-            <!-- 保存按钮 -->
-            <div class="flex items-center justify-between pt-6 border-t">
-                <div id="save-notification" class="flex-1"></div>
-                <div class="flex space-x-3">
-                    <button type="button"
-                            hx-post="/admin/api/config/reset"
-                            hx-target="#save-notification"
-                            hx-swap="innerHTML"
-                            hx-confirm="确定要重置所有配置吗？"
-                            class="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                        重置
-                    </button>
-                    <button type="submit"
-                            class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                        💾 保存并重载
-                    </button>
-                </div>
-            </div>
-
-            <!-- 配置说明 -->
-            <div class="mt-4 bg-blue-50 border-l-4 border-blue-400 p-4">
-                <div class="flex">
-                    <div class="flex-shrink-0">
-                        <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                        </svg>
-                    </div>
-                    <div class="ml-3">
-                        <p class="text-sm text-blue-700">
-                            <strong>提示：</strong>配置保存后会自动热重载，大部分配置无需重启服务即可生效。<br>
-                            仅 <code class="bg-blue-100 px-1 py-0.5 rounded">监听端口</code> 和 <code class="bg-blue-100 px-1 py-0.5 rounded">服务名称</code> 需要手动重启服务。
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </form>
-    </div>
-
-    <!-- 配置文件预览 -->
-    <div class="bg-white shadow rounded-lg">
-        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h3 class="text-lg font-medium text-gray-900">.env 文件预览</h3>
+{% macro render_field(field) -%}
+<div class="{{ 'md:col-span-2' if field.wide else '' }} rounded-2xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm">
+    {% if field.value_type == 'bool' %}
+    <label class="flex min-h-[44px] cursor-pointer items-start gap-3">
+        <input
+            type="checkbox"
+            name="{{ field.key }}"
+            class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            {{ 'checked' if field.value else '' }}>
+        <span class="flex-1">
+            <span class="block text-sm font-semibold text-slate-900">{{ field.label }}</span>
+            <span class="mt-1 block text-sm leading-6 text-slate-600">{{ field.description }}</span>
+        </span>
+    </label>
+    {% else %}
+    <div {% if field.sensitive %}x-data="{ reveal: false }"{% endif %}>
+        <div class="flex items-start justify-between gap-3">
+            <label for="{{ field.key }}" class="block text-sm font-semibold text-slate-900">
+                {{ field.label }}
+            </label>
+            {% if field.sensitive %}
             <button
-                hx-get="/admin/api/env-preview"
-                hx-target="#env-preview"
-                class="text-sm text-indigo-600 hover:text-indigo-700">
-                刷新
+                type="button"
+                @click="reveal = !reveal"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-700">
+                <span x-text="reveal ? '隐藏' : '显示'"></span>
             </button>
+            {% endif %}
         </div>
-        <div class="p-6">
-            <div id="env-preview" class="bg-gray-50 rounded-md p-4 font-mono text-sm overflow-x-auto">
-                <pre>{{ env_content or '加载中...' }}</pre>
+        <p class="mt-1 text-sm leading-6 text-slate-600">{{ field.description }}</p>
+        <input
+            id="{{ field.key }}"
+            name="{{ field.key }}"
+            {% if field.sensitive %}
+            :type="reveal ? 'text' : '{{ field.input_type }}'"
+            {% else %}
+            type="{{ field.input_type }}"
+            {% endif %}
+            value="{{ field.value }}"
+            placeholder="{{ field.placeholder }}"
+            {% if field.required %}required{% endif %}
+            {% if field.min_value is not none %}min="{{ field.min_value }}"{% endif %}
+            {% if field.max_value is not none %}max="{{ field.max_value }}"{% endif %}
+            class="mt-3 block w-full rounded-xl border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+    </div>
+    {% endif %}
+
+    <div class="mt-3 flex flex-wrap gap-2 text-xs">
+        <span class="inline-flex items-center rounded-full px-2.5 py-1 font-medium ring-1 ring-inset {{ field.source_badge_class }}">
+            {{ field.source_label }}
+        </span>
+        {% if field.restart_required %}
+        <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
+            需重启
+        </span>
+        {% endif %}
+        {% if field.sensitive %}
+        <span class="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-1 font-medium text-rose-700 ring-1 ring-inset ring-rose-200">
+            敏感字段
+        </span>
+        {% endif %}
+    </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div x-data="configPage()" class="space-y-6">
+    <div class="overflow-hidden rounded-3xl bg-slate-900 shadow-2xl">
+        <div class="bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.35),_transparent_35%),linear-gradient(135deg,_#0f172a,_#1e293b_55%,_#172554)] px-6 py-8 sm:px-8">
+            <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div class="max-w-3xl">
+                    <p class="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-200">Admin Config Center</p>
+                    <h2 class="mt-3 text-3xl font-bold text-white sm:text-4xl">集中管理运行参数，并支持直接编辑 `.env` 源文件</h2>
+                    <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+                        结构化表单适合日常操作，源文件模式适合批量调整、复制完整配置或保留注释。两种模式都会在保存后立即热重载。
+                    </p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <button
+                        type="button"
+                        @click="setView('form')"
+                        :class="activeView === 'form'
+                            ? 'bg-white text-slate-900 shadow-lg'
+                            : 'bg-white/10 text-white hover:bg-white/20'"
+                        class="inline-flex min-h-[44px] items-center rounded-2xl px-4 py-2 text-sm font-semibold transition">
+                        结构化表单
+                    </button>
+                    <button
+                        type="button"
+                        @click="setView('source')"
+                        :class="activeView === 'source'
+                            ? 'bg-white text-slate-900 shadow-lg'
+                            : 'bg-white/10 text-white hover:bg-white/20'"
+                        class="inline-flex min-h-[44px] items-center rounded-2xl px-4 py-2 text-sm font-semibold transition">
+                        源文件编辑
+                    </button>
+                    <button
+                        type="button"
+                        hx-post="/admin/api/config/reset"
+                        hx-target="#config-feedback"
+                        hx-swap="innerHTML"
+                        hx-confirm="确定要用 .env.example 覆盖当前 .env 吗？"
+                        class="inline-flex min-h-[44px] items-center rounded-2xl border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15">
+                        重置为示例配置
+                    </button>
+                </div>
             </div>
+
+            <div class="config-grid mt-8 grid gap-3">
+                <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                    <p class="text-xs uppercase tracking-[0.2em] text-indigo-200">受管字段</p>
+                    <p class="mt-2 text-3xl font-bold text-white">{{ overview.total_fields }}</p>
+                    <p class="mt-1 text-sm text-slate-300">{{ overview.total_sections }} 个分组</p>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                    <p class="text-xs uppercase tracking-[0.2em] text-indigo-200">.env 覆写</p>
+                    <p class="mt-2 text-3xl font-bold text-white">{{ overview.overridden_fields }}</p>
+                    <p class="mt-1 text-sm text-slate-300">{{ overview.default_fields }} 个字段仍在使用默认值</p>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                    <p class="text-xs uppercase tracking-[0.2em] text-indigo-200">敏感字段</p>
+                    <p class="mt-2 text-3xl font-bold text-white">{{ overview.sensitive_fields }}</p>
+                    <p class="mt-1 text-sm text-slate-300">{{ overview.restart_required_fields }} 个字段修改后建议重启</p>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                    <p class="text-xs uppercase tracking-[0.2em] text-indigo-200">源文件状态</p>
+                    <p class="mt-2 text-lg font-bold text-white">{{ '.env 已存在' if overview.env_exists else '.env 尚未创建' }}</p>
+                    <p class="mt-1 text-sm text-slate-300">{{ overview.env_line_count }} 行，{{ '.env.example 可用' if overview.example_exists else '缺少 .env.example' }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="config-feedback"></div>
+
+    {% if not overview.env_exists %}
+    <div class="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+        当前工作目录中尚未找到 `.env` 文件。你可以直接保存表单或源文件，系统会自动创建它。
+    </div>
+    {% endif %}
+
+    <div class="grid gap-6 xl:grid-cols-[280px,minmax(0,1fr)]">
+        <aside class="space-y-4">
+            <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-base font-semibold text-slate-900">工作区</h3>
+                </div>
+                <div class="mt-3 rounded-2xl bg-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-600 break-all">
+                    {{ overview.env_path }}
+                </div>
+                <div class="mt-4 space-y-3 text-sm text-slate-600">
+                    <p>表单模式会只更新受管字段，并保留 `.env` 中未知配置和注释顺序。</p>
+                    <p>源文件模式会直接覆盖整个 `.env`，适合批量调整和粘贴完整配置。</p>
+                </div>
+            </div>
+
+            <div x-show="activeView === 'form'" x-cloak class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 class="text-base font-semibold text-slate-900">分组导航</h3>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    {% for section in sections %}
+                    {{ section_link(section) }}
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div x-show="activeView === 'source'" x-cloak class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 class="text-base font-semibold text-slate-900">源文件提示</h3>
+                <div class="mt-4 space-y-3 text-sm leading-6 text-slate-600">
+                    <p>每一行应遵循 `KEY=VALUE` 格式，空行和以 `#` 开头的注释会被保留。</p>
+                    <p>直接修改源文件时，结构化表单不会实时同步，保存后页面会自动刷新到当前视图。</p>
+                    <p>如果你需要保留完整注释、顺序或复制整套配置，优先使用这一模式。</p>
+                </div>
+            </div>
+
+            <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 class="text-base font-semibold text-slate-900">热重载说明</h3>
+                <div class="mt-4 space-y-3 text-sm leading-6 text-slate-600">
+                    <p>大多数字段保存后会立即生效。</p>
+                    <p>标记为“需重启”的字段涉及监听端口、进程名称或底层持久化路径，建议手动重启服务。</p>
+                    <p>修改后台密码或会话密钥后，建议重新登录后台验证新配置已生效。</p>
+                </div>
+            </div>
+        </aside>
+
+        <div class="space-y-6">
+            <form
+                x-show="activeView === 'form'"
+                x-cloak
+                hx-post="/admin/api/config/save"
+                hx-target="#config-feedback"
+                hx-swap="innerHTML"
+                class="space-y-6">
+                {% for section in sections %}
+                <section id="{{ section.id }}" class="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
+                    <div class="border-b border-slate-200 bg-slate-50/70 px-6 py-5">
+                        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <h3 class="text-lg font-semibold text-slate-900">{{ section.title }}</h3>
+                                <p class="mt-1 text-sm leading-6 text-slate-600">{{ section.description }}</p>
+                            </div>
+                            <span class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
+                                {{ section.field_count }} 个字段
+                            </span>
+                        </div>
+                    </div>
+                    <div class="grid gap-4 p-6 md:grid-cols-2">
+                        {% for field in section.fields %}
+                        {{ render_field(field) }}
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endfor %}
+
+                <div class="sticky bottom-4 z-10 rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-2xl backdrop-blur">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <p class="text-sm text-slate-600">
+                            表单模式会保留未知配置，只更新当前页面管理的字段。
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <button
+                                type="button"
+                                @click="setView('source')"
+                                class="inline-flex min-h-[44px] items-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+                                切换到源文件编辑
+                            </button>
+                            <button
+                                type="submit"
+                                class="inline-flex min-h-[44px] items-center rounded-2xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
+                                保存表单并热重载
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+            <form
+                x-show="activeView === 'source'"
+                x-cloak
+                hx-post="/admin/api/config/source"
+                hx-target="#config-feedback"
+                hx-swap="innerHTML"
+                class="space-y-6">
+                <section class="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
+                    <div class="border-b border-slate-200 bg-slate-50/70 px-6 py-5">
+                        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <h3 class="text-lg font-semibold text-slate-900">`.env` 源文件编辑器</h3>
+                                <p class="mt-1 text-sm leading-6 text-slate-600">
+                                    直接编辑源文件内容。该模式会原样覆盖整个 `.env`，适合保留注释、批量调整和整体替换。
+                                </p>
+                            </div>
+                            <span class="inline-flex max-w-full items-center rounded-2xl bg-slate-100 px-3 py-2 text-xs font-medium leading-5 text-slate-700 break-all">
+                                {{ overview.env_path }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="space-y-4 p-6">
+                        <div class="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm leading-6 text-indigo-900">
+                            保存前会进行基础语法检查，确保每一行是合法的 `KEY=VALUE` 结构；如果热重载失败，系统会自动回滚到原来的 `.env`。
+                        </div>
+                        <textarea
+                            name="env_content"
+                            rows="28"
+                            spellcheck="false"
+                            class="block min-h-[560px] w-full rounded-2xl border border-slate-300 bg-slate-950 px-4 py-4 font-mono text-sm leading-6 text-slate-100 shadow-inner focus:border-indigo-500 focus:ring-indigo-500">{{ env_content }}</textarea>
+                    </div>
+                </section>
+
+                <div class="sticky bottom-4 z-10 rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-2xl backdrop-blur">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <p class="text-sm text-slate-600">
+                            源文件模式会直接覆盖整个 `.env`。保存后会自动刷新页面并保留当前视图。
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <button
+                                type="button"
+                                @click="setView('form')"
+                                class="inline-flex min-h-[44px] items-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+                                返回表单视图
+                            </button>
+                            <button
+                                type="submit"
+                                class="inline-flex min-h-[44px] items-center rounded-2xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800">
+                                保存源文件并热重载
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -187,13 +319,25 @@
 
 {% block extra_scripts %}
 <script>
-    // 配置保存成功后的处理
+    function configPage() {
+        return {
+            activeView: localStorage.getItem('admin-config-active-view') || 'form',
+            setView(view) {
+                this.activeView = view;
+                localStorage.setItem('admin-config-active-view', view);
+            }
+        };
+    }
+
+    document.body.addEventListener('admin-config-refresh', () => {
+        setTimeout(() => {
+            window.location.reload();
+        }, 450);
+    });
+
     document.body.addEventListener('htmx:afterSwap', function(evt) {
-        if (evt.detail.target.id === 'save-notification') {
-            // 3秒后自动隐藏通知
-            setTimeout(() => {
-                evt.detail.target.innerHTML = '';
-            }, 3000);
+        if (evt.detail.target.id === 'config-feedback') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
     });
 </script>

@@ -13,9 +13,10 @@ Token 池管理器 - 基于数据库的 Token 轮询和健康检查
 
 import asyncio
 import time
-from typing import Dict, List, Optional, Set, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Lock
+from typing import Dict, List, Optional, Set, Tuple
+
 import httpx
 
 from app.utils.logger import logger
@@ -36,6 +37,8 @@ class TokenStatus:
     last_success_time: float = 0.0
     total_requests: int = 0
     successful_requests: int = 0
+    db_synced_successful_requests: int = 0
+    db_synced_failed_requests: int = 0
 
     @property
     def success_rate(self) -> float:
@@ -43,6 +46,11 @@ class TokenStatus:
         if self.total_requests == 0:
             return 1.0
         return self.successful_requests / self.total_requests
+
+    @property
+    def failed_requests(self) -> int:
+        """失败次数。"""
+        return max(0, self.total_requests - self.successful_requests)
 
     @property
     def is_healthy(self) -> bool:
@@ -329,6 +337,52 @@ class TokenPool:
                     status.is_available = False
                     logger.warning(f"🚫 Token 已禁用: {token[:20]}... (失败 {status.failure_count} 次)")
 
+    async def record_token_success(self, token: str, dao=None):
+        """标记成功并实时同步数据库统计。"""
+        self.mark_token_success(token)
+
+        token_id = self.get_token_id(token)
+        if token_id is None:
+            return
+
+        if dao is None:
+            from app.services.token_dao import get_token_dao
+
+            dao = get_token_dao()
+
+        try:
+            await dao.record_success(token_id)
+        except Exception as e:
+            logger.error(f"❌ 同步 Token 成功统计失败: {e}")
+            return
+
+        with self._lock:
+            if token in self.token_statuses:
+                self.token_statuses[token].db_synced_successful_requests += 1
+
+    async def record_token_failure(self, token: str, error: Exception = None, dao=None):
+        """标记失败并实时同步数据库统计。"""
+        self.mark_token_failure(token, error)
+
+        token_id = self.get_token_id(token)
+        if token_id is None:
+            return
+
+        if dao is None:
+            from app.services.token_dao import get_token_dao
+
+            dao = get_token_dao()
+
+        try:
+            await dao.record_failure(token_id)
+        except Exception as e:
+            logger.error(f"❌ 同步 Token 失败统计失败: {e}")
+            return
+
+        with self._lock:
+            if token in self.token_statuses:
+                self.token_statuses[token].db_synced_failed_requests += 1
+
     def get_token_id(self, token: str) -> Optional[int]:
         """获取 Token 的数据库 ID"""
         return self.token_id_map.get(token)
@@ -402,9 +456,12 @@ class TokenPool:
 
         # 更新状态
         if is_valid:
-            self.mark_token_success(token)
+            await self.record_token_success(token)
         else:
-            self.mark_token_failure(token, Exception(error_message or "验证失败"))
+            await self.record_token_failure(
+                token,
+                Exception(error_message or "验证失败"),
+            )
 
         return is_valid
 
@@ -592,17 +649,37 @@ async def sync_token_stats_to_db():
 
     dao = get_token_dao()
 
+    pending_updates = []
     with pool._lock:
         for token, status in pool.token_statuses.items():
-            token_id = status.token_id
+            pending_success = max(
+                0,
+                status.successful_requests - status.db_synced_successful_requests,
+            )
+            pending_failure = max(
+                0,
+                status.failed_requests - status.db_synced_failed_requests,
+            )
+            if pending_success > 0 or pending_failure > 0:
+                pending_updates.append(
+                    (
+                        token,
+                        status.token_id,
+                        pending_success,
+                        pending_failure,
+                    )
+                )
 
-            # 更新数据库统计（简化版，实际可能需要增量更新）
-            if status.successful_requests > 0:
-                for _ in range(status.successful_requests):
-                    await dao.record_success(token_id)
+    for token, token_id, pending_success, pending_failure in pending_updates:
+        for _ in range(pending_success):
+            await dao.record_success(token_id)
+        for _ in range(pending_failure):
+            await dao.record_failure(token_id)
 
-            if status.total_requests - status.successful_requests > 0:
-                for _ in range(status.total_requests - status.successful_requests):
-                    await dao.record_failure(token_id)
+        with pool._lock:
+            if token in pool.token_statuses:
+                status = pool.token_statuses[token]
+                status.db_synced_successful_requests += pending_success
+                status.db_synced_failed_requests += pending_failure
 
     logger.info("✅ Token 统计已同步到数据库")

@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     first_token_time REAL,
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
     total_tokens INTEGER DEFAULT 0,
     error_message TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -141,6 +141,7 @@
             <button hx-delete="/admin/api/tokens/delete/{{ token.id }}"
                     hx-target="#token-row-{{ token.id }}"
                     hx-swap="outerHTML swap:1s"
+                    hx-on::after-request="if (event.detail.successful) { htmx.trigger(document.body, 'tokenListRefresh'); htmx.trigger(document.body, 'statsRefresh'); }"
                     hx-confirm="确定要删除这个 Token 吗？"
                     class="text-red-600 hover:text-red-900 transition-colors"
                     title="删除 Token">

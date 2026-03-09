@@ -3,20 +3,32 @@
 {% block title %}Token 管理{% endblock %}
 
 {% block content %}
-<div class="space-y-6" x-data="{
+<div class="space-y-6" x-data='{
     showAddModal: false,
     showValidateModal: false,
-    newToken: '',
-    bulkTokens: '',
+    newToken: "",
+    bulkTokens: "",
+    hasImportSourceDir: {{ "true" if automation.has_import_source_dir else "false" }},
+    hasMaintenanceActions: {{ "true" if automation.has_maintenance_actions else "false" }},
+    isImporting: false,
+    isRunningMaintenance: false,
     isValidating: false
-}">
+}'>
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
         <div>
             <h2 class="text-3xl font-bold text-gray-900">Token 管理</h2>
             <p class="mt-1 text-sm text-gray-600">管理和维护当前服务使用的 Token</p>
         </div>
-        <div class="flex space-x-3">
+        <div class="flex flex-wrap gap-3">
+            <a href="{{ automation.config_url }}"
+               class="px-4 py-2 bg-slate-900 text-white rounded-md text-sm font-medium hover:bg-slate-800 flex items-center">
+                <svg class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                打开配置中心
+            </a>
             <button @click="showValidateModal = true"
                     class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 flex items-center">
                 <svg class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -68,20 +80,131 @@
         </div>
     </div>
 
-    <!-- 当前通道和操作栏 -->
-    <div class="bg-white shadow rounded-lg p-4">
-        <div class="flex items-center justify-end flex-wrap gap-4">
-            <!-- 刷新按钮 -->
-            <button hx-get="/admin/api/tokens/list"
-                    hx-target="#token-list"
-                    class="flex items-center px-3 py-2 text-gray-600 hover:text-indigo-600 hover:bg-gray-50 rounded-md transition-colors"
-                    title="刷新列表">
-                <svg class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span class="text-sm font-medium">刷新</span>
-            </button>
-        </div>
+    <!-- 自动目录导入与维护 -->
+    <div id="token-automation" class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <section class="bg-white shadow rounded-lg p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">目录导入策略</h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        配置入口已迁移到配置管理页。这里仅展示当前策略，并允许立即执行一次导入。
+                    </p>
+                </div>
+                <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold {% if automation.import_enabled %}bg-emerald-100 text-emerald-700{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ '定时已开启' if automation.import_enabled else '定时已关闭' }}
+                </span>
+            </div>
+
+            {% if automation.has_import_source_dir %}
+            <div class="rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">
+                手动导入会复用当前配置的目录和验证逻辑，重复 Token 会自动跳过。
+            </div>
+            {% else %}
+            <div class="rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm text-amber-700">
+                还没有配置导入目录，无法执行手动导入。请先到配置管理页设置 `TOKEN_AUTO_IMPORT_SOURCE_DIR`。
+            </div>
+            {% endif %}
+
+            <dl class="space-y-4 text-sm">
+                <div class="rounded-lg border border-gray-200 p-4">
+                    <dt class="font-medium text-gray-700">Token 目录</dt>
+                    <dd class="mt-2 rounded-md bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 break-all">
+                        {{ automation.import_source_dir or '未配置' }}
+                    </dd>
+                </div>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <dt class="font-medium text-gray-700">扫描间隔</dt>
+                        <dd class="mt-2 text-gray-900">{{ automation.import_interval }} 秒</dd>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <dt class="font-medium text-gray-700">配置位置</dt>
+                        <dd class="mt-2 text-gray-900">配置管理 / Token 池策略</dd>
+                    </div>
+                </div>
+            </dl>
+
+            <div class="flex flex-wrap gap-3 pt-2">
+                <a href="{{ automation.config_url }}"
+                   class="px-4 py-2 border border-emerald-200 text-emerald-700 rounded-md text-sm font-medium hover:bg-emerald-50">
+                    去配置中心修改
+                </a>
+                <button type="button"
+                        hx-post="/admin/api/tokens/import-directory"
+                        hx-target="#notification"
+                        @htmx:before-request="isImporting = true"
+                        @htmx:after-request="isImporting = false; if ($event.detail.successful) { htmx.trigger('body', 'tokenListRefresh'); htmx.trigger('body', 'statsRefresh'); }"
+                        :disabled="isImporting || !hasImportSourceDir"
+                        class="px-4 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    立即导入当前目录
+                </button>
+            </div>
+        </section>
+
+        <section class="bg-white shadow rounded-lg p-6 space-y-5">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">自动维护策略</h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        维护动作和定时间隔统一在配置管理页设置。这里仅执行当前已配置的维护策略。
+                    </p>
+                </div>
+                <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold {% if automation.maintenance_enabled %}bg-blue-100 text-blue-700{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ '定时已开启' if automation.maintenance_enabled else '定时已关闭' }}
+                </span>
+            </div>
+
+            {% if automation.has_maintenance_actions %}
+            <div class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
+                手动维护会按当前配置顺序执行去重、测活和失效清理，不再在本页单独维护另一套选项。
+            </div>
+            {% else %}
+            <div class="rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm text-amber-700">
+                当前没有配置任何维护动作。请先到配置管理页勾选至少一个维护动作。
+            </div>
+            {% endif %}
+
+            <dl class="space-y-4 text-sm">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <dt class="font-medium text-gray-700">维护间隔</dt>
+                        <dd class="mt-2 text-gray-900">{{ automation.maintenance_interval }} 秒</dd>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <dt class="font-medium text-gray-700">配置位置</dt>
+                        <dd class="mt-2 text-gray-900">配置管理 / Token 池策略</dd>
+                    </div>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4">
+                    <dt class="font-medium text-gray-700">当前维护动作</dt>
+                    <dd class="mt-2 flex flex-wrap gap-2">
+                        {% if automation.maintenance_actions %}
+                        {% for action in automation.maintenance_actions %}
+                        <span class="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{{ action }}</span>
+                        {% endfor %}
+                        {% else %}
+                        <span class="text-gray-500">未配置</span>
+                        {% endif %}
+                    </dd>
+                </div>
+            </dl>
+
+            <div class="flex flex-wrap gap-3 pt-2">
+                <a href="{{ automation.config_url }}"
+                   class="px-4 py-2 border border-blue-200 text-blue-700 rounded-md text-sm font-medium hover:bg-blue-50">
+                    去配置中心修改
+                </a>
+                <button type="button"
+                        hx-post="/admin/api/tokens/maintenance/run"
+                        hx-target="#notification"
+                        @htmx:before-request="isRunningMaintenance = true"
+                        @htmx:after-request="isRunningMaintenance = false; if ($event.detail.successful) { htmx.trigger('body', 'tokenListRefresh'); htmx.trigger('body', 'statsRefresh'); }"
+                        :disabled="isRunningMaintenance || !hasMaintenanceActions"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    执行当前维护策略
+                </button>
+            </div>
+        </section>
     </div>
 
     <!-- Token 列表 -->
@@ -111,8 +234,8 @@
             </div>
         </div>
         <div id="token-list"
-             hx-get="/admin/api/tokens/list"
-             hx-trigger="load, tokenListRefresh from:body"
+             hx-get="/admin/api/tokens/list?page=1&page_size=20"
+             hx-trigger="load"
              hx-swap="innerHTML">
             <!-- Token 列表内容 -->
             <div class="flex justify-center items-center py-12">
@@ -282,6 +405,19 @@
 
 {% block extra_scripts %}
 <script>
+window.tokenListPage = 1;
+window.tokenListPageSize = 20;
+
+function loadTokenListPage(page) {
+    const nextPage = Math.max(1, Number(page) || 1);
+    window.tokenListPage = nextPage;
+    const url = `/admin/api/tokens/list?page=${nextPage}&page_size=${window.tokenListPageSize}`;
+    htmx.ajax('GET', url, {
+        target: '#token-list',
+        swap: 'innerHTML'
+    });
+}
+
 // 全局通知函数
 function showNotification(message, type = 'success') {
     const notification = document.createElement('div');
@@ -342,6 +478,10 @@ document.body.addEventListener('htmx:afterSwap', function(evt) {
             htmx.trigger('body', 'statsRefresh');
         }
     }
+});
+
+document.body.addEventListener('tokenListRefresh', function() {
+    loadTokenListPage(window.tokenListPage || 1);
 });
 </script>
 {% endblock %}

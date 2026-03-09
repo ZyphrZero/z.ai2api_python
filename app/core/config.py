@@ -3,6 +3,7 @@
 
 import os
 from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -18,6 +19,28 @@ class Settings(BaseSettings):
     # Token池配置
     TOKEN_FAILURE_THRESHOLD: int = int(os.getenv("TOKEN_FAILURE_THRESHOLD", "3"))  # 失败3次后标记为不可用
     TOKEN_RECOVERY_TIMEOUT: int = int(os.getenv("TOKEN_RECOVERY_TIMEOUT", "1800"))  # 30分钟后重试失败的token
+    TOKEN_AUTO_IMPORT_ENABLED: bool = (
+        os.getenv("TOKEN_AUTO_IMPORT_ENABLED", "false").lower() == "true"
+    )
+    TOKEN_AUTO_IMPORT_SOURCE_DIR: str = os.getenv("TOKEN_AUTO_IMPORT_SOURCE_DIR", "")
+    TOKEN_AUTO_IMPORT_INTERVAL: int = int(
+        os.getenv("TOKEN_AUTO_IMPORT_INTERVAL", "300")
+    )
+    TOKEN_AUTO_MAINTENANCE_ENABLED: bool = (
+        os.getenv("TOKEN_AUTO_MAINTENANCE_ENABLED", "false").lower() == "true"
+    )
+    TOKEN_AUTO_MAINTENANCE_INTERVAL: int = int(
+        os.getenv("TOKEN_AUTO_MAINTENANCE_INTERVAL", "1800")
+    )
+    TOKEN_AUTO_REMOVE_DUPLICATES: bool = (
+        os.getenv("TOKEN_AUTO_REMOVE_DUPLICATES", "true").lower() == "true"
+    )
+    TOKEN_AUTO_HEALTH_CHECK: bool = (
+        os.getenv("TOKEN_AUTO_HEALTH_CHECK", "true").lower() == "true"
+    )
+    TOKEN_AUTO_DELETE_INVALID: bool = (
+        os.getenv("TOKEN_AUTO_DELETE_INVALID", "false").lower() == "true"
+    )
 
     # Model Configuration
     GLM45_MODEL: str = os.getenv("GLM45_MODEL", "GLM-4.5")

@@ -31,6 +31,7 @@ from app.core.openai import get_upstream_client
 from app.models.schemas import Message, OpenAIRequest
 from app.utils.logger import get_logger
 from app.utils.request_logging import (
+    extract_openai_usage,
     extract_claude_usage,
     wrap_claude_stream_with_logging,
     write_request_log,
@@ -213,15 +214,17 @@ def _convert_openai_response_to_claude(response: Dict[str, Any], msg_id: str) ->
     choice = ((response.get("choices") or [{}])[0]) if isinstance(response, dict) else {}
     message = choice.get("message") or {}
     reasoning = message.get("reasoning_content")
-    usage = response.get("usage") or {}
+    usage = extract_openai_usage(response)
     return build_non_stream_response(
         msg_id=msg_id,
         model=response.get("model", settings.GLM5_MODEL),
         reasoning_parts=[reasoning] if isinstance(reasoning, str) and reasoning else [],
         answer_text=message.get("content") or "",
         tool_calls=_normalize_tool_calls(message.get("tool_calls")),
-        input_tokens=int(usage.get("prompt_tokens") or 0),
-        output_tokens=int(usage.get("completion_tokens") or 0),
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        cache_creation_tokens=usage["cache_creation_tokens"],
+        cache_read_tokens=usage["cache_read_tokens"],
     )
 
 
@@ -236,7 +239,10 @@ async def _stream_openai_to_claude(
     tool_calls: List[Dict[str, Any]] = []
     block_index = 0
     thinking_started = False
+    final_input_tokens = input_tokens
     final_output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
 
     yield sse_message_start(msg_id, model, input_tokens)
     yield sse_ping()
@@ -282,10 +288,15 @@ async def _stream_openai_to_claude(
                 answer_parts.append(content_delta)
 
             if payload.get("usage"):
-                usage = payload.get("usage") or {}
-                final_output_tokens = int(
-                    usage.get("completion_tokens") or final_output_tokens
-                )
+                usage = extract_openai_usage(payload)
+                if usage["input_tokens"] > 0:
+                    final_input_tokens = usage["input_tokens"]
+                if usage["output_tokens"] > 0:
+                    final_output_tokens = usage["output_tokens"]
+                if usage["cache_creation_tokens"] > 0:
+                    cache_creation_tokens = usage["cache_creation_tokens"]
+                if usage["cache_read_tokens"] > 0:
+                    cache_read_tokens = usage["cache_read_tokens"]
 
             tool_calls.extend(_normalize_tool_calls(delta.get("tool_calls")))
 
@@ -337,6 +348,9 @@ async def _stream_openai_to_claude(
         yield sse_message_delta(
             "tool_use" if tool_calls else "end_turn",
             final_output_tokens,
+            input_tokens=final_input_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
         )
         yield sse_message_stop()
     except Exception as exc:
@@ -351,24 +365,67 @@ async def claude_messages(
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="x-api-key"),
 ):
+    source_info = detect_request_source(
+        request,
+        protocol_hint="anthropic",
+    )
+    source_prefix = format_request_source(source_info)
+    started_at = time.perf_counter()
+    requested_model = "unknown"
+
     try:
         body = await request.json()
     except Exception:
+        await write_request_log(
+            provider="zai",
+            model=requested_model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=400,
+            error_message="Invalid JSON body",
+        )
         return _claude_error_response(
             "Invalid JSON body",
             400,
             "invalid_request_error",
         )
 
+    requested_model = str(body.get("model") or "unknown")
+    source_info = detect_request_source(
+        request,
+        protocol_hint="anthropic",
+        model_hint=body.get("model"),
+    )
+    source_prefix = format_request_source(source_info)
+
     if not settings.SKIP_AUTH_TOKEN:
         api_key = _extract_api_key(authorization, x_api_key)
         if not api_key:
+            await write_request_log(
+                provider="zai",
+                model=requested_model,
+                source_info=source_info,
+                success=False,
+                started_at=started_at,
+                status_code=401,
+                error_message="Missing API key",
+            )
             return _claude_error_response(
                 "Missing API key",
                 401,
                 "authentication_error",
             )
         if api_key != settings.AUTH_TOKEN:
+            await write_request_log(
+                provider="zai",
+                model=requested_model,
+                source_info=source_info,
+                success=False,
+                started_at=started_at,
+                status_code=401,
+                error_message="Invalid API key",
+            )
             return _claude_error_response(
                 "Invalid API key",
                 401,
@@ -378,6 +435,15 @@ async def claude_messages(
     try:
         openai_request = _build_openai_request(body)
     except Exception as exc:
+        await write_request_log(
+            provider="zai",
+            model=requested_model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=400,
+            error_message=f"Invalid request: {exc}",
+        )
         return _claude_error_response(
             f"Invalid request: {exc}",
             400,
@@ -385,19 +451,20 @@ async def claude_messages(
         )
 
     if not openai_request.messages:
+        await write_request_log(
+            provider="zai",
+            model=openai_request.model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=400,
+            error_message="messages is required",
+        )
         return _claude_error_response(
             "messages is required",
             400,
             "invalid_request_error",
         )
-
-    source_info = detect_request_source(
-        request,
-        protocol_hint="anthropic",
-        model_hint=body.get("model"),
-    )
-    source_prefix = format_request_source(source_info)
-    started_at = time.perf_counter()
     logger.info(
         f"{source_prefix} 🤖 收到 Claude 请求 - 模型: {body.get('model')}, 映射模型: {openai_request.model}, 流式: {openai_request.stream}, 消息数: {len(openai_request.messages)}, 工具数: {len(openai_request.tools) if openai_request.tools else 0}"
     )
@@ -423,14 +490,34 @@ async def claude_messages(
 
     if isinstance(result, dict) and "error" in result:
         error = result.get("error") or {}
+        error_code = error.get("code")
+        status_code = error_code if isinstance(error_code, int) else 500
+        await write_request_log(
+            provider="zai",
+            model=openai_request.model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=status_code,
+            error_message=error.get("message", "Unknown upstream error"),
+        )
         return _claude_error_response(
             error.get("message", "Unknown upstream error"),
-            500,
+            status_code,
             error.get("type", "api_error"),
         )
 
     if openai_request.stream:
         if not hasattr(result, "__aiter__"):
+            await write_request_log(
+                provider="zai",
+                model=openai_request.model,
+                source_info=source_info,
+                success=False,
+                started_at=started_at,
+                status_code=500,
+                error_message="Expected streaming response",
+            )
             return _claude_error_response(
                 "Expected streaming response",
                 500,
@@ -460,6 +547,15 @@ async def claude_messages(
         )
 
     if not isinstance(result, dict):
+        await write_request_log(
+            provider="zai",
+            model=openai_request.model,
+            source_info=source_info,
+            success=False,
+            started_at=started_at,
+            status_code=500,
+            error_message="Expected non-streaming response payload",
+        )
         return _claude_error_response(
             "Expected non-streaming response payload",
             500,
@@ -479,5 +575,8 @@ async def claude_messages(
         status_code=200,
         input_tokens=usage["input_tokens"],
         output_tokens=usage["output_tokens"],
+        cache_creation_tokens=usage["cache_creation_tokens"],
+        cache_read_tokens=usage["cache_read_tokens"],
+        total_tokens=usage["total_tokens"],
     )
     return JSONResponse(content=response_data)

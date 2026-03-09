@@ -4,139 +4,251 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- 页面标题 -->
-    <div class="flex items-center justify-between">
-        <h2 class="text-3xl font-bold text-gray-900">仪表盘</h2>
-        <div class="text-sm text-gray-500">
-            最后更新: <span id="last-update">{{ current_time }}</span>
-        </div>
-    </div>
-
-    <!-- 统计卡片 -->
-    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <!-- 运行时间 -->
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">运行时间</dt>
-                            <dd class="text-2xl font-semibold text-gray-900">{{ stats.uptime }}</dd>
-                        </dl>
-                    </div>
+    <div class="overflow-hidden rounded-3xl bg-slate-900 shadow-2xl">
+        <div class="bg-[radial-gradient(circle_at_top_right,_rgba(45,212,191,0.22),_transparent_30%),radial-gradient(circle_at_left,_rgba(59,130,246,0.18),_transparent_28%),linear-gradient(135deg,_#0f172a,_#111827_58%,_#1e293b)] px-6 py-7 sm:px-8">
+            <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                <div class="max-w-3xl">
+                    <p class="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200">Usage Dashboard</p>
+                    <h2 class="mt-3 text-3xl font-bold text-white sm:text-4xl">查看请求消耗、缓存效果、延迟表现和使用趋势</h2>
+                    <p class="mt-3 text-sm leading-6 text-slate-300 sm:text-base">
+                        统计来源于请求日志数据库，覆盖输入输出 Token、缓存创建与命中、成功率、平均延迟，以及最近 24 小时、7 天、30 天的使用趋势。
+                    </p>
                 </div>
-            </div>
-        </div>
-
-        <!-- 总请求数 -->
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">总请求数</dt>
-                            <dd class="text-2xl font-semibold text-gray-900">{{ stats.total_requests }}</dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 成功率 -->
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">成功率</dt>
-                            <dd class="text-2xl font-semibold text-gray-900">{{ stats.success_rate }}%</dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Token 池状态 -->
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        {% if stats.healthy_tokens >= stats.total_tokens * 0.8 %}
-                        <svg class="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {% elif stats.healthy_tokens >= stats.total_tokens * 0.5 %}
-                        <svg class="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        {% else %}
-                        <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {% endif %}
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Token 池健康度</dt>
-                            <dd class="flex items-baseline">
-                                <span class="text-2xl font-semibold text-gray-900">{{ stats.healthy_tokens }}/{{ stats.total_tokens }}</span>
-                                {% if stats.guest_tokens > 0 %}
-                                <span class="ml-2 text-sm font-medium text-yellow-600">({{ stats.guest_tokens }} 个匿名)</span>
-                                {% endif %}
-                            </dd>
-                            <dd class="mt-1 text-xs text-gray-500">可用: {{ stats.available_tokens }} | 认证: {{ stats.user_tokens }}</dd>
-                        </dl>
-                    </div>
+                <div class="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 backdrop-blur">
+                    <p class="text-xs uppercase tracking-[0.2em] text-cyan-200">Last Update</p>
+                    <p id="last-update" class="mt-2 text-lg font-semibold text-white">{{ current_time }}</p>
+                    <p class="mt-1 text-sm text-slate-300">运行时间 {{ stats.uptime }}</p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Token 池详情 -->
-    <div class="bg-white shadow rounded-lg">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h3 class="text-lg font-medium text-gray-900">Token 池状态</h3>
-        </div>
-        <div class="p-6">
-            <div
-                id="token-pool-status"
-                hx-get="/admin/api/token-pool"
-                hx-trigger="load, every 5s"
-                hx-swap="innerHTML">
-                <!-- Token 池状态将通过 htmx 加载 -->
-                <div class="flex justify-center items-center py-12">
-                    <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">总请求数</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.total_requests }}</p>
+                </div>
+                <span class="rounded-2xl bg-slate-100 p-3 text-slate-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <span class="ml-3 text-gray-500">加载中...</span>
-                </div>
+                </span>
             </div>
+            <p class="mt-3 text-sm text-slate-500">成功 {{ stats.successful_requests }} / 失败 {{ stats.failed_requests }}</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">总消耗 Token 数</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.total_consumed_tokens_display }}</p>
+                </div>
+                <span class="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 1.343-3 3v6h6v-6c0-1.657-1.343-3-3-3zm0 0V5m0 3a4 4 0 00-4 4v5h8v-5a4 4 0 00-4-4z" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">累计 {{ stats.total_consumed_tokens }} Tokens</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">缓存 Token</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.total_cache_tokens_display }}</p>
+                </div>
+                <span class="rounded-2xl bg-amber-50 p-3 text-amber-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10m-10 5h16" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">创建 {{ stats.cache_creation_tokens }} / 命中 {{ stats.cache_read_tokens }}</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">成功率</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.success_rate }}%</p>
+                </div>
+                <span class="rounded-2xl bg-sky-50 p-3 text-sky-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">图表支持切换 24 小时 / 7 天 / 30 天</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">输入 Token</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.input_tokens_display }}</p>
+                </div>
+                <span class="rounded-2xl bg-violet-50 p-3 text-violet-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4m0 0l6-6m-6 6l6 6" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">累计 {{ stats.input_tokens }} Tokens</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">输出 Token</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.output_tokens_display }}</p>
+                </div>
+                <span class="rounded-2xl bg-rose-50 p-3 text-rose-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12h16m0 0l-6-6m6 6l-6 6" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">累计 {{ stats.output_tokens }} Tokens</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">平均延迟</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ "%.2f"|format(stats.average_latency) }}s</p>
+                </div>
+                <span class="rounded-2xl bg-orange-50 p-3 text-orange-600">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">平均首字延迟 {{ "%.2f"|format(stats.average_first_token_latency) }}s</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Token 池健康度</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ stats.healthy_tokens }}/{{ stats.pool_total_tokens }}</p>
+                </div>
+                <span class="rounded-2xl {% if stats.pool_total_tokens == 0 %}bg-slate-100 text-slate-500{% elif stats.healthy_tokens >= stats.pool_total_tokens * 0.8 %}bg-emerald-50 text-emerald-600{% elif stats.healthy_tokens >= stats.pool_total_tokens * 0.5 %}bg-amber-50 text-amber-600{% else %}bg-red-50 text-red-600{% endif %} p-3">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </span>
+            </div>
+            <p class="mt-3 text-sm text-slate-500">可用 {{ stats.available_tokens }} / 已启用 {{ stats.enabled_tokens }} / 认证 {{ stats.user_tokens }}</p>
         </div>
     </div>
 
-    <!-- 最近请求日志 -->
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 xl:col-span-2">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900">使用趋势图</h3>
+                    <p
+                        id="usage-trend-description"
+                        class="mt-1 text-sm text-slate-600"
+                    >
+                        最近 7 天按天聚合的请求量、输入输出与缓存变化。
+                    </p>
+                </div>
+                <div
+                    id="usage-trend-window-switcher"
+                    class="flex flex-wrap gap-2"
+                >
+                    {% set trend_window_options = trend_windows if trend_windows is defined and trend_windows else [
+                        {'key': '24h', 'label': '24 小时'},
+                        {'key': '7d', 'label': '7 天'},
+                        {'key': '30d', 'label': '30 天'}
+                    ] %}
+                    {% for option in trend_window_options %}
+                    <button
+                        type="button"
+                        data-trend-window="{{ option.key }}"
+                        class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-sky-300 hover:text-sky-700"
+                    >
+                        {{ option.label }}
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs">
+                <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">蓝柱: 请求量</span>
+                <span class="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 font-medium text-violet-700">紫线: 输入</span>
+                <span class="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-700">红线: 输出</span>
+                <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700">绿线: 缓存创建</span>
+                <span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700">黄线: 缓存命中</span>
+            </div>
+            <div class="mt-6 h-[320px]">
+                <canvas id="usage-trend-chart"></canvas>
+            </div>
+            <p
+                id="usage-trend-error"
+                class="mt-3 hidden rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+            ></p>
+        </section>
+
+        <div class="space-y-6">
+            <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                <h3 class="text-lg font-semibold text-slate-900">缓存创建 / 命中</h3>
+                <p class="mt-1 text-sm text-slate-600">按请求次数和 Token 数量查看缓存是否真的生效。</p>
+                <div class="mt-5 grid grid-cols-1 gap-4">
+                    <div class="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                        <p class="text-sm font-medium text-emerald-700">缓存创建</p>
+                        <p class="mt-2 text-2xl font-bold text-emerald-900">{{ stats.cache_creation_requests }}</p>
+                        <p class="mt-1 text-sm text-emerald-700">共创建 {{ stats.cache_creation_tokens }} Tokens</p>
+                    </div>
+                    <div class="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                        <p class="text-sm font-medium text-amber-700">缓存命中</p>
+                        <p class="mt-2 text-2xl font-bold text-amber-900">{{ stats.cache_hit_requests }}</p>
+                        <p class="mt-1 text-sm text-amber-700">共命中 {{ stats.cache_read_tokens }} Tokens</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                <h3 class="text-lg font-semibold text-slate-900">输入 / 输出画像</h3>
+                <p class="mt-1 text-sm text-slate-600">对比 Prompt 与 Completion 的消耗分布。</p>
+                {% set usage_total = stats.input_tokens + stats.output_tokens %}
+                {% set input_ratio = (stats.input_tokens / usage_total * 100) if usage_total > 0 else 0 %}
+                {% set output_ratio = (stats.output_tokens / usage_total * 100) if usage_total > 0 else 0 %}
+                <div class="mt-5 space-y-4">
+                    <div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="font-medium text-slate-700">输入 Token</span>
+                            <span class="text-slate-500">{{ "%.1f"|format(input_ratio) }}%</span>
+                        </div>
+                        <div class="mt-2 h-2 rounded-full bg-slate-100">
+                            <div class="h-2 rounded-full bg-violet-500" style="width: {{ input_ratio }}%"></div>
+                        </div>
+                        <p class="mt-2 text-sm text-slate-500">{{ stats.input_tokens }} Tokens</p>
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="font-medium text-slate-700">输出 Token</span>
+                            <span class="text-slate-500">{{ "%.1f"|format(output_ratio) }}%</span>
+                        </div>
+                        <div class="mt-2 h-2 rounded-full bg-slate-100">
+                            <div class="h-2 rounded-full bg-rose-500" style="width: {{ output_ratio }}%"></div>
+                        </div>
+                        <p class="mt-2 text-sm text-slate-500">{{ stats.output_tokens }} Tokens</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
     <div class="bg-white shadow rounded-lg">
         <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h3 class="text-lg font-medium text-gray-900">最近请求日志</h3>
-            <div class="flex items-center space-x-2" x-data="{ autoRefresh: true }">
+            <div class="flex items-center space-x-2">
                 <label class="flex items-center cursor-pointer">
-                    <input type="checkbox" x-model="autoRefresh" class="form-checkbox h-4 w-4 text-indigo-600">
+                    <input id="recent-logs-auto-refresh" type="checkbox" checked class="form-checkbox h-4 w-4 text-indigo-600">
                     <span class="ml-2 text-sm text-gray-600">自动刷新</span>
                 </label>
             </div>
@@ -144,10 +256,9 @@
         <div class="p-6">
             <div
                 id="recent-logs"
-                hx-get="/admin/api/recent-logs"
-                hx-trigger="load, every 3s"
+                hx-get="/admin/api/recent-logs?page=1&page_size=12"
+                hx-trigger="load"
                 hx-swap="innerHTML">
-                <!-- 日志内容将通过 htmx 加载 -->
                 <div class="flex justify-center items-center py-12">
                     <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -163,12 +274,315 @@
 
 {% block extra_scripts %}
 <script>
-    // 更新时间显示
+    window.dashboardRecentLogsPage = 1;
+    window.dashboardRecentLogsPageSize = 12;
+    window.dashboardTrendWindow = {{ stats.get('trend_window', '7d') | tojson }};
+    window.dashboardTrendData = {{ stats.get('usage_trend', []) | tojson }};
+    window.dashboardTrendChart = null;
+
+    const trendWindowDescriptions = {
+        '24h': '最近 24 小时按小时聚合的请求量、输入输出与缓存变化。',
+        '7d': '最近 7 天按天聚合的请求量、输入输出与缓存变化。',
+        '30d': '最近 30 天按天聚合的请求量、输入输出与缓存变化。'
+    };
+
+    function loadRecentLogsPage(page) {
+        const nextPage = Math.max(1, Number(page) || 1);
+        window.dashboardRecentLogsPage = nextPage;
+        const url = `/admin/api/recent-logs?page=${nextPage}&page_size=${window.dashboardRecentLogsPageSize}`;
+        htmx.ajax('GET', url, {
+            target: '#recent-logs',
+            swap: 'innerHTML'
+        });
+    }
+
     function updateTime() {
         const now = new Date();
         document.getElementById('last-update').textContent = now.toLocaleString('zh-CN');
     }
+
+    function updateTrendDescription() {
+        const description = document.getElementById('usage-trend-description');
+        if (!description) {
+            return;
+        }
+        description.textContent = (
+            trendWindowDescriptions[window.dashboardTrendWindow]
+            || trendWindowDescriptions['7d']
+        );
+    }
+
+    function updateTrendWindowButtons() {
+        document
+            .querySelectorAll('[data-trend-window]')
+            .forEach((button) => {
+                const isActive = (
+                    button.dataset.trendWindow === window.dashboardTrendWindow
+                );
+                button.disabled = false;
+                button.classList.toggle('bg-sky-600', isActive);
+                button.classList.toggle('border-sky-600', isActive);
+                button.classList.toggle('text-white', isActive);
+                button.classList.toggle('shadow-sm', isActive);
+                button.classList.toggle('bg-white', !isActive);
+                button.classList.toggle('border-slate-200', !isActive);
+                button.classList.toggle('text-slate-600', !isActive);
+            });
+    }
+
+    function setTrendLoadingState(isLoading) {
+        document
+            .querySelectorAll('[data-trend-window]')
+            .forEach((button) => {
+                button.disabled = isLoading;
+                button.classList.toggle('opacity-60', isLoading);
+                button.classList.toggle('cursor-not-allowed', isLoading);
+            });
+    }
+
+    function showTrendError(message) {
+        const errorBox = document.getElementById('usage-trend-error');
+        if (!errorBox) {
+            return;
+        }
+        if (!message) {
+            errorBox.classList.add('hidden');
+            errorBox.textContent = '';
+            return;
+        }
+        errorBox.textContent = message;
+        errorBox.classList.remove('hidden');
+    }
+
+    function renderUsageTrendChart() {
+        const canvas = document.getElementById('usage-trend-chart');
+        if (!canvas) {
+            return;
+        }
+
+        const usageTrend = window.dashboardTrendData || [];
+        const labels = usageTrend.map((item) => item.label);
+        const requestSeries = usageTrend.map((item) => item.total_requests);
+        const inputSeries = usageTrend.map((item) => item.input_tokens);
+        const outputSeries = usageTrend.map((item) => item.output_tokens);
+        const cacheCreationSeries = usageTrend.map(
+            (item) => item.cache_creation_tokens
+        );
+        const cacheReadSeries = usageTrend.map(
+            (item) => item.cache_read_tokens
+        );
+
+        if (window.dashboardTrendChart) {
+            window.dashboardTrendChart.destroy();
+        }
+
+        window.dashboardTrendChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: '请求量',
+                        data: requestSeries,
+                        yAxisID: 'yRequests',
+                        backgroundColor: 'rgba(59, 130, 246, 0.18)',
+                        borderColor: 'rgba(59, 130, 246, 0.85)',
+                        borderWidth: 1.5,
+                        borderRadius: 10
+                    },
+                    {
+                        type: 'line',
+                        label: '输入 Token',
+                        data: inputSeries,
+                        yAxisID: 'yTokens',
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139, 92, 246, 0.16)',
+                        borderWidth: 3,
+                        tension: 0.35,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '输出 Token',
+                        data: outputSeries,
+                        yAxisID: 'yTokens',
+                        borderColor: '#f43f5e',
+                        backgroundColor: 'rgba(244, 63, 94, 0.16)',
+                        borderWidth: 3,
+                        tension: 0.35,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '缓存创建',
+                        data: cacheCreationSeries,
+                        yAxisID: 'yTokens',
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.16)',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        tension: 0.35,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '缓存命中',
+                        data: cacheReadSeries,
+                        yAxisID: 'yTokens',
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                        borderWidth: 2,
+                        borderDash: [3, 4],
+                        tension: 0.35,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 10,
+                            color: '#475569'
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title(context) {
+                                const index = context[0]?.dataIndex ?? 0;
+                                return (
+                                    usageTrend[index]?.tooltip_label
+                                    || usageTrend[index]?.label
+                                    || ''
+                                );
+                            },
+                            label(context) {
+                                const value = Number(context.parsed.y || 0);
+                                if (context.dataset.label === '请求量') {
+                                    return `${context.dataset.label}: ${value} 次`;
+                                }
+                                return (
+                                    `${context.dataset.label}: `
+                                    + `${value.toLocaleString('zh-CN')} Tokens`
+                                );
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    },
+                    yRequests: {
+                        position: 'left',
+                        beginAtZero: true,
+                        ticks: {
+                            precision: 0
+                        },
+                        grid: {
+                            color: 'rgba(148, 163, 184, 0.14)'
+                        }
+                    },
+                    yTokens: {
+                        position: 'right',
+                        beginAtZero: true,
+                        grid: {
+                            drawOnChartArea: false
+                        },
+                        ticks: {
+                            callback(value) {
+                                return Number(value).toLocaleString('zh-CN');
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        updateTrendDescription();
+        updateTrendWindowButtons();
+    }
+
+    async function loadUsageTrend(windowKey) {
+        const nextWindow = String(windowKey || '').trim();
+        if (!nextWindow) {
+            return;
+        }
+
+        setTrendLoadingState(true);
+        showTrendError('');
+
+        try {
+            const response = await fetch(
+                `/admin/api/dashboard/usage-trend?window=${encodeURIComponent(nextWindow)}`,
+                {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const payload = await response.json();
+            window.dashboardTrendWindow = payload.window || '7d';
+            window.dashboardTrendData = payload.points || [];
+            renderUsageTrendChart();
+        } catch (error) {
+            showTrendError('趋势图加载失败，请稍后重试。');
+            console.error('Failed to load dashboard trend:', error);
+        } finally {
+            setTrendLoadingState(false);
+        }
+    }
+
+    function initTrendWindowSwitcher() {
+        updateTrendDescription();
+        updateTrendWindowButtons();
+
+        document
+            .querySelectorAll('[data-trend-window]')
+            .forEach((button) => {
+                button.addEventListener('click', () => {
+                    const nextWindow = button.dataset.trendWindow;
+                    if (nextWindow === window.dashboardTrendWindow) {
+                        return;
+                    }
+                    loadUsageTrend(nextWindow);
+                });
+            });
+    }
+
     updateTime();
+    initTrendWindowSwitcher();
+    renderUsageTrendChart();
     setInterval(updateTime, 1000);
+
+    setInterval(() => {
+        const checkbox = document.getElementById('recent-logs-auto-refresh');
+        if (checkbox && checkbox.checked) {
+            loadRecentLogsPage(window.dashboardRecentLogsPage || 1);
+        }
+    }, 3000);
 </script>
 {% endblock %}

@@ -174,6 +174,9 @@ async def chat_completions(
                 status_code=200 if "error" not in result else 500,
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
+                cache_creation_tokens=usage["cache_creation_tokens"],
+                cache_read_tokens=usage["cache_read_tokens"],
+                total_tokens=usage["total_tokens"],
                 error_message=(result.get("error") or {}).get("message") if isinstance(result, dict) else None,
             )
             return JSONResponse(content=result)
@@ -190,6 +193,9 @@ async def chat_completions(
             status_code=200,
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
+            cache_creation_tokens=usage["cache_creation_tokens"],
+            cache_read_tokens=usage["cache_read_tokens"],
+            total_tokens=usage["total_tokens"],
         )
         return response
 

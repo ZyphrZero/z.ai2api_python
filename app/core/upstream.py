@@ -806,11 +806,11 @@ class UpstreamClient:
             "guest_user_id": None,
         }
 
-    def mark_token_failure(self, token: str, error: Exception = None):
+    async def mark_token_failure(self, token: str, error: Exception = None):
         """标记token使用失败"""
         token_pool = get_token_pool()
         if token_pool:
-            token_pool.mark_token_failure(token, error)
+            await token_pool.record_token_failure(token, error)
 
     async def upload_image(
         self,
@@ -1352,7 +1352,7 @@ class UpstreamClient:
                     current_token = str(transformed.get("token") or "")
                     if current_token:
                         excluded_tokens.add(current_token)
-                        self.mark_token_failure(
+                        await self.mark_token_failure(
                             current_token,
                             Exception(error_message or "上游认证会话不可用"),
                         )
@@ -1369,22 +1369,29 @@ class UpstreamClient:
                     continue
 
                 if not response.is_success:
-                    await self._release_guest_session(transformed)
                     error_msg = f"上游 API 错误: {response.status_code}"
+                    if not self._is_guest_auth(transformed):
+                        current_token = str(transformed.get("token") or "")
+                        if current_token:
+                            await self.mark_token_failure(
+                                current_token,
+                                Exception(error_message or error_msg),
+                            )
+                    await self._release_guest_session(transformed)
                     self.logger.error(f"❌ {self.name} 响应失败: {error_msg}")
                     return handle_error(Exception(error_message or error_msg))
+
+                try:
+                    result = await self.transform_response(response, request, transformed)
+                finally:
+                    await self._release_guest_session(transformed)
 
                 if not self._is_guest_auth(transformed):
                     current_token = str(transformed.get("token") or "")
                     if current_token:
                         token_pool = get_token_pool()
                         if token_pool:
-                            token_pool.mark_token_success(current_token)
-
-                try:
-                    result = await self.transform_response(response, request, transformed)
-                finally:
-                    await self._release_guest_session(transformed)
+                            await token_pool.record_token_success(current_token)
 
                 return result
 
@@ -1470,7 +1477,7 @@ class UpstreamClient:
                         ):
                             if current_token:
                                 excluded_tokens.add(current_token)
-                                self.mark_token_failure(
+                                await self.mark_token_failure(
                                     current_token,
                                     Exception(
                                         parsed_error_message or "上游认证会话不可用"
@@ -1494,6 +1501,14 @@ class UpstreamClient:
                             if error_msg:
                                 self.logger.error(f"❌ 错误详情: {error_msg}")
 
+                            if not self._is_guest_auth(transformed) and current_token:
+                                await self.mark_token_failure(
+                                    current_token,
+                                    Exception(
+                                        parsed_error_message
+                                        or f"Upstream error: {response.status_code}"
+                                    ),
+                                )
                             await self._release_guest_session(transformed)
 
                             if response.status_code == 405:
@@ -1523,11 +1538,6 @@ class UpstreamClient:
                             yield "data: [DONE]\n\n"
                             return
 
-                        if not self._is_guest_auth(transformed) and current_token:
-                            token_pool = get_token_pool()
-                            if token_pool:
-                                token_pool.mark_token_success(current_token)
-
                         chat_id = transformed["chat_id"]
                         model = transformed["model"]
                         try:
@@ -1541,6 +1551,11 @@ class UpstreamClient:
                                 yield chunk
                         finally:
                             await self._release_guest_session(transformed)
+
+                        if not self._is_guest_auth(transformed) and current_token:
+                            token_pool = get_token_pool()
+                            if token_pool:
+                                await token_pool.record_token_success(current_token)
                         return
         except Exception as e:
             self.logger.error(f"❌ 流处理错误: {e}")
@@ -1549,7 +1564,7 @@ class UpstreamClient:
             if self._is_guest_auth(transformed):
                 await self._release_guest_session(transformed)
             elif current_token:
-                self.mark_token_failure(current_token, e)
+                await self.mark_token_failure(current_token, e)
 
             error_response = {
                 "error": {

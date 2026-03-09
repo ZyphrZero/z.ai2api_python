@@ -3,23 +3,20 @@
 
 import os
 import sys
-import psutil
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
-from app.core.config import settings
-from app.core import claude, openai
-from app.utils.reload_config import RELOAD_CONFIG
-from app.utils.logger import setup_logger
-from app.core.upstream import UpstreamClient
-
-from app.admin import routes as admin_routes
-from app.admin import api as admin_api
-
 from granian import Granian
 
+from app.admin import api as admin_api
+from app.admin import routes as admin_routes
+from app.core import claude, openai
+from app.core.config import settings
+from app.core.upstream import UpstreamClient
+from app.utils.logger import setup_logger
+from app.utils.reload_config import RELOAD_CONFIG
 
 # Setup logger
 logger = setup_logger(log_dir="logs", debug_mode=settings.DEBUG_LOGGING)
@@ -37,11 +34,26 @@ async def warmup_upstream_client():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 初始化 Token 数据库
-    from app.services.token_dao import init_token_database
     from app.services.request_log_dao import init_request_log_dao
+    from app.services.token_automation import (
+        run_directory_import,
+        start_token_automation_scheduler,
+        stop_token_automation_scheduler,
+    )
+    from app.services.token_dao import init_token_database
 
     await init_token_database()
     init_request_log_dao()
+
+    if settings.TOKEN_AUTO_IMPORT_ENABLED and settings.TOKEN_AUTO_IMPORT_SOURCE_DIR.strip():
+        try:
+            await run_directory_import(
+                settings.TOKEN_AUTO_IMPORT_SOURCE_DIR,
+                provider="zai",
+            )
+            logger.info("✅ 启动阶段已完成一次目录自动导入")
+        except Exception as exc:
+            logger.warning(f"⚠️ 启动阶段目录自动导入失败: {exc}")
 
     # 从数据库初始化认证 token 池
     from app.utils.token_pool import initialize_token_pool_from_db
@@ -69,10 +81,13 @@ async def lifespan(app: FastAPI):
         )
 
     await warmup_upstream_client()
+    await start_token_automation_scheduler()
 
     yield
 
     logger.info("🔄 应用正在关闭...")
+
+    await stop_token_automation_scheduler()
 
     if settings.ANONYMOUS_MODE:
         from app.utils.guest_session_pool import close_guest_session_pool
@@ -137,7 +152,7 @@ def run_server():
             interface="asgi",
             address="0.0.0.0",
             port=settings.LISTEN_PORT,
-            reload=False,  # 生产环境请关闭热重载
+            reload=True,  # 生产环境请关闭热重载
             process_name=service_name,  # 设置进程名称
             **RELOAD_CONFIG,    # 热重载配置
         ).serve()

@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}服务监控{% endblock %}
+{% block title %}实时日志{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <!-- 页面标题 -->
     <div class="flex items-center justify-between">
-        <h2 class="text-3xl font-bold text-gray-900">服务监控</h2>
-        <div class="flex items-center space-x-4">
-            <!-- 手动刷新按钮 -->
+        <div>
+            <h2 class="text-3xl font-bold text-gray-900">实时日志</h2>
+            <p class="mt-1 text-sm text-gray-600">滚动查看服务当前输出的最新日志</p>
+        </div>
+        <div class="flex items-center space-x-3">
             <button
                 onclick="window.location.reload()"
                 class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
@@ -17,31 +18,9 @@
         </div>
     </div>
 
-    <!-- 提供商状态详情 -->
-    <div class="bg-white shadow rounded-lg">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h3 class="text-lg font-medium text-gray-900">运行状态</h3>
-        </div>
-        <div
-            id="channel-status"
-            hx-get="/admin/api/channel-status"
-            hx-trigger="load, every 5s"
-            hx-swap="innerHTML"
-            class="p-6">
-            <!-- 加载中状态 -->
-            <div class="flex justify-center items-center py-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-            </div>
-        </div>
-    </div>
-
-    <!-- 实时日志流 -->
     <div class="bg-white shadow rounded-lg">
         <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h3 class="text-lg font-medium text-gray-900">实时日志</h3>
+            <h3 class="text-lg font-medium text-gray-900">日志流</h3>
             <div class="flex space-x-2">
                 <button
                     onclick="document.getElementById('live-logs').innerHTML = '<div class=\'text-center text-gray-500 py-4\'>日志已清空</div>'"
@@ -57,8 +36,7 @@
                 hx-trigger="load, every 3s"
                 hx-swap="innerHTML scroll:bottom"
                 class="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm overflow-y-auto"
-                style="max-height: 500px;">
-                <!-- 日志内容 -->
+                style="max-height: 600px;">
                 <div class="flex justify-center items-center py-8">
                     <span class="text-gray-500">加载中...</span>
                 </div>
@@ -70,10 +48,8 @@
 
 {% block extra_scripts %}
 <script>
-    // 自动滚动到日志底部（显示最新日志）
     const logsContainer = document.getElementById('live-logs');
 
-    // 监听 htmx 更新事件
     document.body.addEventListener('htmx:afterSwap', function(event) {
         if (event.detail.target.id === 'live-logs') {
             logsContainer.scrollTop = logsContainer.scrollHeight;
