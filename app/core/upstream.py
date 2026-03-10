@@ -3,19 +3,19 @@
 
 """上游适配器。"""
 
+import asyncio
+import base64
 import json
+import random
 import time
 import uuid
-import httpx
-import base64
-import asyncio
-from urllib.parse import urlencode
-import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
-from app.utils.user_agent import get_random_user_agent
-from app.utils.fe_version import get_latest_fe_version
-from app.utils.signature import generate_signature
+from urllib.parse import urlencode
+
+import httpx
+
+from app.core.config import settings
 from app.core.openai_compat import (
     create_openai_chunk,
     create_openai_response_with_reasoning,
@@ -23,25 +23,56 @@ from app.core.openai_compat import (
     handle_error,
 )
 from app.models.schemas import OpenAIRequest
-from app.core.config import settings
-from app.utils.logger import get_logger
-from app.utils.token_pool import get_token_pool
+from app.utils.fe_version import get_latest_fe_version
 from app.utils.guest_session_pool import get_guest_session_pool
+from app.utils.logger import get_logger
+from app.utils.signature import generate_signature
+from app.utils.token_pool import get_token_pool
 from app.utils.tool_call_handler import (
     parse_and_extract_tool_calls,
 )
+from app.utils.user_agent import get_random_user_agent
 
 logger = get_logger()
+
+DEFAULT_ZAI_BASE_URL = "https://chat.z.ai"
+CHAT_BOOTSTRAP_MAX_CONTENT_LEN = 500
+DEFAULT_PLATFORM = "web"
+DEFAULT_CLIENT_VERSION = "0.0.1"
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+DEFAULT_LANGUAGE = "zh-CN"
+DEFAULT_SCREEN_WIDTH = "1920"
+DEFAULT_SCREEN_HEIGHT = "1080"
+DEFAULT_VIEWPORT_WIDTH = "944"
+DEFAULT_VIEWPORT_HEIGHT = "919"
+DEFAULT_VIEWPORT_SIZE = f"{DEFAULT_VIEWPORT_WIDTH}x{DEFAULT_VIEWPORT_HEIGHT}"
+DEFAULT_SCREEN_RESOLUTION = f"{DEFAULT_SCREEN_WIDTH}x{DEFAULT_SCREEN_HEIGHT}"
+DEFAULT_COLOR_DEPTH = "24"
+DEFAULT_PIXEL_RATIO = "1.25"
+DEFAULT_MAX_TOUCH_POINTS = "10"
+DEFAULT_TIMEZONE_OFFSET = "-480"
+DEFAULT_PAGE_TITLE = "Z.ai - Free AI Chatbot & Agent powered by GLM-5 & GLM-4.7"
 
 def generate_uuid() -> str:
     """生成UUID v4"""
     return str(uuid.uuid4())
 
-def get_dynamic_headers(chat_id: str = "") -> Dict[str, str]:
+def get_dynamic_headers(
+    chat_id: str = "",
+    browser_type: Optional[str] = None,
+) -> Dict[str, str]:
     """生成上游请求所需的动态浏览器 headers。"""
-    browser_choices = ["chrome", "chrome", "chrome", "edge", "edge", "firefox", "safari"]
-    browser_type = random.choice(browser_choices)
-    user_agent = get_random_user_agent(browser_type)
+    browser_choices = [
+        "chrome",
+        "chrome",
+        "chrome",
+        "edge",
+        "edge",
+        "firefox",
+        "safari",
+    ]
+    selected_browser = browser_type or random.choice(browser_choices)
+    user_agent = get_random_user_agent(selected_browser)
     fe_version = get_latest_fe_version()
 
     chrome_version = "139"
@@ -50,19 +81,28 @@ def get_dynamic_headers(chat_id: str = "") -> Dict[str, str]:
     if "Chrome/" in user_agent:
         try:
             chrome_version = user_agent.split("Chrome/")[1].split(".")[0]
-        except:
+        except Exception:
             pass
 
     if "Edg/" in user_agent:
         try:
             edge_version = user_agent.split("Edg/")[1].split(".")[0]
-            sec_ch_ua = f'"Microsoft Edge";v="{edge_version}", "Chromium";v="{chrome_version}", "Not_A Brand";v="24"'
-        except:
-            sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"'
+            sec_ch_ua = (
+                f'"Microsoft Edge";v="{edge_version}", '
+                f'"Chromium";v="{chrome_version}", "Not_A Brand";v="24"'
+            )
+        except Exception:
+            sec_ch_ua = (
+                f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", '
+                f'"Google Chrome";v="{chrome_version}"'
+            )
     elif "Firefox/" in user_agent:
         sec_ch_ua = None
     else:
-        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"'
+        sec_ch_ua = (
+            f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", '
+            f'"Google Chrome";v="{chrome_version}"'
+        )
 
     headers = {
         "Content-Type": "application/json",
@@ -311,7 +351,7 @@ class UpstreamClient:
         self.api_endpoint = settings.API_ENDPOINT
 
         # 当前上游特定配置
-        self.base_url = "https://chat.z.ai"
+        self.base_url = DEFAULT_ZAI_BASE_URL
         self.auth_url = f"{self.base_url}/api/v1/auths/"
         
         # 模型映射
@@ -552,6 +592,283 @@ class UpstreamClient:
             settings.GLM47_SEARCH_MODEL,
             settings.GLM47_ADVANCED_SEARCH_MODEL,
         ]
+
+    def _requires_persisted_chat(self, upstream_model_id: str) -> bool:
+        """GLM-4.7 系列需要先在上游创建真实 chat 会话。"""
+        return upstream_model_id == "glm-4.7"
+
+    def _build_request_variables(self) -> Dict[str, str]:
+        """构建上游请求需要的运行时变量。"""
+        now = datetime.now()
+        return {
+            "{{USER_NAME}}": "Guest",
+            "{{USER_LOCATION}}": "Unknown",
+            "{{CURRENT_DATETIME}}": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "{{CURRENT_DATE}}": now.strftime("%Y-%m-%d"),
+            "{{CURRENT_TIME}}": now.strftime("%H:%M:%S"),
+            "{{CURRENT_WEEKDAY}}": now.strftime("%A"),
+            "{{CURRENT_TIMEZONE}}": DEFAULT_TIMEZONE,
+            "{{USER_LANGUAGE}}": DEFAULT_LANGUAGE,
+        }
+
+    def _build_browser_query_params(
+        self,
+        *,
+        chat_id: str,
+        token: str,
+        user_id: str,
+        user_agent: str,
+        timestamp_ms: int,
+    ) -> Dict[str, str]:
+        """构建 GLM-4.7 所需的浏览器指纹查询参数。"""
+        now = datetime.now(timezone.utc)
+        browser_name = "Chrome"
+        if "Edg/" in user_agent:
+            browser_name = "Microsoft Edge"
+        elif "Firefox/" in user_agent:
+            browser_name = "Firefox"
+        elif "Safari/" in user_agent and "Chrome/" not in user_agent:
+            browser_name = "Safari"
+
+        return {
+            "version": DEFAULT_CLIENT_VERSION,
+            "platform": DEFAULT_PLATFORM,
+            "token": token,
+            "user_agent": user_agent,
+            "language": DEFAULT_LANGUAGE,
+            "languages": DEFAULT_LANGUAGE,
+            "timezone": DEFAULT_TIMEZONE,
+            "cookie_enabled": "true",
+            "screen_width": DEFAULT_SCREEN_WIDTH,
+            "screen_height": DEFAULT_SCREEN_HEIGHT,
+            "screen_resolution": DEFAULT_SCREEN_RESOLUTION,
+            "viewport_height": DEFAULT_VIEWPORT_HEIGHT,
+            "viewport_width": DEFAULT_VIEWPORT_WIDTH,
+            "viewport_size": DEFAULT_VIEWPORT_SIZE,
+            "color_depth": DEFAULT_COLOR_DEPTH,
+            "pixel_ratio": DEFAULT_PIXEL_RATIO,
+            "current_url": f"{self.base_url}/c/{chat_id}",
+            "pathname": f"/c/{chat_id}",
+            "search": "",
+            "hash": "",
+            "host": "chat.z.ai",
+            "hostname": "chat.z.ai",
+            "protocol": "https:",
+            "referrer": "",
+            "title": DEFAULT_PAGE_TITLE,
+            "timezone_offset": DEFAULT_TIMEZONE_OFFSET,
+            "local_time": (
+                now.strftime("%Y-%m-%dT%H:%M:%S.")
+                + f"{now.microsecond // 1000:03d}Z"
+            ),
+            "utc_time": now.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            "is_mobile": "false",
+            "is_touch": "false",
+            "max_touch_points": DEFAULT_MAX_TOUCH_POINTS,
+            "browser_name": browser_name,
+            "os_name": "Windows",
+            "signature_timestamp": str(timestamp_ms),
+        }
+
+    def _build_signed_completion_request(
+        self,
+        *,
+        prompt: str,
+        chat_id: str,
+        token: str,
+        user_id: str,
+        user_agent: str,
+        use_browser_fingerprint: bool,
+    ) -> Tuple[str, str, str]:
+        """构建上游 completions 的签名 URL 与请求头元数据。"""
+        timestamp_ms = int(time.time() * 1000)
+        request_id = generate_uuid()
+        core_params = {
+            "requestId": request_id,
+            "timestamp": str(timestamp_ms),
+            "user_id": user_id,
+        }
+        canonical_payload = ",".join(
+            f"{key},{value}" for key, value in sorted(core_params.items())
+        )
+        signature = generate_signature(
+            e=canonical_payload,
+            t=prompt or "",
+            s=timestamp_ms,
+        )["signature"]
+        query_params = dict(core_params)
+        if use_browser_fingerprint:
+            query_params.update(
+                self._build_browser_query_params(
+                    chat_id=chat_id,
+                    token=token,
+                    user_id=user_id,
+                    user_agent=user_agent,
+                    timestamp_ms=timestamp_ms,
+                )
+            )
+        else:
+            query_params.update(
+                {
+                    "token": token,
+                    "version": DEFAULT_CLIENT_VERSION,
+                    "platform": DEFAULT_PLATFORM,
+                    "current_url": f"{self.base_url}/c/{chat_id}",
+                    "pathname": f"/c/{chat_id}",
+                    "signature_timestamp": str(timestamp_ms),
+                }
+            )
+
+        return (
+            f"{self.api_endpoint}?{urlencode(query_params)}",
+            signature,
+            str(timestamp_ms),
+        )
+
+    async def _create_upstream_chat(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        token: str,
+        headers: Dict[str, str],
+        enable_thinking: bool,
+        web_search: bool,
+    ) -> str:
+        """为 GLM-4.7 系列创建上游真实 chat 会话。"""
+        init_content = prompt[:CHAT_BOOTSTRAP_MAX_CONTENT_LEN]
+        if len(prompt) > CHAT_BOOTSTRAP_MAX_CONTENT_LEN:
+            init_content = init_content + "..."
+
+        message_id = generate_uuid()
+        timestamp_seconds = int(time.time())
+        body = {
+            "chat": {
+                "id": "",
+                "title": "新聊天",
+                "models": [model],
+                "params": {},
+                "history": {
+                    "messages": {
+                        message_id: {
+                            "id": message_id,
+                            "parentId": None,
+                            "childrenIds": [],
+                            "role": "user",
+                            "content": init_content,
+                            "timestamp": timestamp_seconds,
+                            "models": [model],
+                        }
+                    },
+                    "currentId": message_id,
+                },
+                "tags": [],
+                "flags": [],
+                "features": [
+                    {
+                        "type": "tool_selector",
+                        "server": "tool_selector_h",
+                        "status": "hidden",
+                    }
+                ],
+                "mcp_servers": [],
+                "enable_thinking": enable_thinking,
+                "auto_web_search": web_search,
+                "message_version": 1,
+                "extra": {},
+                "timestamp": int(time.time() * 1000),
+            }
+        }
+        request_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": headers["User-Agent"],
+            "Accept-Language": headers.get("Accept-Language", DEFAULT_LANGUAGE),
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}/",
+        }
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self._build_timeout(),
+            limits=self._build_limits(),
+            proxy=self._get_proxy_config(),
+            follow_redirects=True,
+        ) as client:
+            response = await client.post(
+                "/api/v1/chats/new",
+                headers=request_headers,
+                json=body,
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"上游创建 chat 失败: {response.status_code} {response.text}"
+            )
+
+        payload = response.json()
+        chat_id = str(payload.get("id") or payload.get("chat", {}).get("id") or "")
+        if not chat_id:
+            raise RuntimeError("上游创建 chat 成功但未返回 chat_id")
+        return chat_id
+
+    def _build_glm47_completion_body(
+        self,
+        *,
+        model: str,
+        messages: List[Dict[str, Any]],
+        prompt: str,
+        chat_id: str,
+        enable_thinking: bool,
+        web_search: bool,
+        files: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        tool_choice: Any,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        mcp_servers: List[str],
+    ) -> Dict[str, Any]:
+        """构建兼容 GLM-4.7 的精简 completions 请求体。"""
+        params: Dict[str, Any] = {}
+        if temperature is not None:
+            params["temperature"] = temperature
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+
+        body: Dict[str, Any] = {
+            "stream": True,
+            "model": model,
+            "messages": messages,
+            "signature_prompt": prompt,
+            "params": params,
+            "extra": {},
+            "features": {
+                "image_generation": False,
+                "web_search": web_search,
+                "auto_web_search": web_search,
+                "preview_mode": True,
+                "flags": [],
+                "enable_thinking": enable_thinking,
+            },
+            "variables": self._build_request_variables(),
+            "chat_id": chat_id,
+            "id": generate_uuid(),
+            "current_user_message_id": generate_uuid(),
+            "current_user_message_parent_id": None,
+            "background_tasks": {
+                "title_generation": True,
+                "tags_generation": True,
+            },
+        }
+        if files:
+            body["files"] = files
+        if mcp_servers:
+            body["mcp_servers"] = mcp_servers
+        if tools:
+            body["tools"] = tools
+            if tool_choice is not None:
+                body["tool_choice"] = tool_choice
+        return body
 
     def _clean_reasoning_delta(self, delta_content: str) -> str:
         """清理思考阶段的 details 包裹内容。"""
@@ -933,7 +1250,10 @@ class UpstreamClient:
         """转换 OpenAI 请求为上游格式。"""
         self.logger.info(f"🔄 转换 OpenAI 请求到上游格式: {request.model}")
 
-        raw_messages = [message.model_dump(exclude_none=True) for message in request.messages]
+        raw_messages = [
+            message.model_dump(exclude_none=True)
+            for message in request.messages
+        ]
         normalized_messages = _preprocess_openai_messages(raw_messages)
 
         auth_info = await self.get_auth_info(
@@ -948,153 +1268,7 @@ class UpstreamClient:
         auth_mode = str(auth_info.get("auth_mode") or "authenticated")
         token_source = str(auth_info.get("token_source") or "unknown")
         guest_user_id = auth_info.get("guest_user_id")
-
-        # 生成 chat_id（用于图片上传）
-        chat_id = generate_uuid()
-
-        # 处理消息格式 - 上游使用单独的 files 字段传递图片
-        messages = []
-        files = []  # 存储上传的图片文件信息
-
-        for msg in normalized_messages:
-            role = str(msg.get("role", "user"))
-            content = msg.get("content")
-
-            if isinstance(content, str):
-                # 纯文本消息
-                messages.append({
-                    "role": role,
-                    "content": content
-                })
-            elif isinstance(content, list):
-                # 多模态内容：分离文本和图片
-                text_parts = []
-                image_parts = []  # 存储图片引用
-
-                for part in content:
-                    if hasattr(part, 'type'):
-                        if part.type == 'text' and hasattr(part, 'text'):
-                            # 文本部分
-                            text_parts.append(part.text or '')
-                        elif part.type == 'image_url' and hasattr(part, 'image_url'):
-                            # 图片部分 - 提取并上传
-                            image_url = None
-                            if hasattr(part.image_url, 'url'):
-                                image_url = part.image_url.url
-                            elif isinstance(part.image_url, dict) and 'url' in part.image_url:
-                                image_url = part.image_url['url']
-
-                            if image_url:
-                                self.logger.debug(f"✅ 检测到图片: {image_url[:50]}...")
-
-                                # 如果是 base64 编码的图片，上传并添加到 files 数组
-                                if image_url.startswith("data:") and auth_mode != "guest":
-                                    self.logger.info("🔄 上传 base64 图片到上游服务")
-                                    file_info = await self.upload_image(
-                                        image_url,
-                                        chat_id,
-                                        token,
-                                        user_id,
-                                        auth_mode=auth_mode,
-                                    )
-
-                                    if file_info:
-                                        files.append(file_info)
-                                        self.logger.info(f"✅ 图片已添加到 files 数组")
-
-                                        # 在消息中保留图片引用
-                                        image_ref = f"{file_info['id']}_{file_info['name']}"
-                                        image_parts.append({
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": image_ref
-                                            }
-                                        })
-                                        self.logger.debug(f"📎 图片引用: {image_ref}")
-                                    else:
-                                        # 上传失败，添加错误提示
-                                        self.logger.warning(f"⚠️ 图片上传失败")
-                                        text_parts.append("[系统提示: 图片上传失败]")
-                                else:
-                                    # 非 base64 图片或匿名模式，直接使用原URL
-                                    if auth_mode != "guest":
-                                        self.logger.warning(f"⚠️ 非 base64 图片或匿名模式，保留原始URL")
-                                    image_parts.append({
-                                        "type": "image_url",
-                                        "image_url": {"url": image_url}
-                                    })
-                    elif isinstance(part, dict):
-                        # 直接是字典格式的内容
-                        if part.get('type') == 'text':
-                            text_parts.append(part.get('text', ''))
-                        elif part.get('type') == 'image_url':
-                            image_url = part.get('image_url', {}).get('url', '')
-                            if image_url:
-                                self.logger.debug(f"✅ 检测到图片: {image_url[:50]}...")
-
-                                # 如果是 base64 编码的图片，上传并添加到 files 数组
-                                if image_url.startswith("data:") and auth_mode != "guest":
-                                    self.logger.info("🔄 上传 base64 图片到上游服务")
-                                    file_info = await self.upload_image(
-                                        image_url,
-                                        chat_id,
-                                        token,
-                                        user_id,
-                                        auth_mode=auth_mode,
-                                    )
-
-                                    if file_info:
-                                        files.append(file_info)
-                                        self.logger.info(f"✅ 图片已添加到 files 数组")
-
-                                        # 在消息中保留图片引用
-                                        image_ref = f"{file_info['id']}_{file_info['name']}"
-                                        image_parts.append({
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": image_ref
-                                            }
-                                        })
-                                        self.logger.debug(f"📎 图片引用: {image_ref}")
-                                    else:
-                                        # 上传失败，添加错误提示
-                                        self.logger.warning(f"⚠️ 图片上传失败")
-                                        text_parts.append("[系统提示: 图片上传失败]")
-                                else:
-                                    # 非 base64 图片或匿名模式
-                                    if auth_mode != "guest":
-                                        self.logger.warning(f"⚠️ 非 base64 图片或匿名模式，保留原始URL")
-                                    image_parts.append({
-                                        "type": "image_url",
-                                        "image_url": {"url": image_url}
-                                    })
-                    elif isinstance(part, str):
-                        # 纯字符串部分
-                        text_parts.append(part)
-
-                # 构建多模态消息内容
-                message_content = []
-
-                # 添加文本部分
-                combined_text = " ".join(text_parts).strip()
-                if combined_text:
-                    message_content.append({
-                        "type": "text",
-                        "text": combined_text
-                    })
-
-                # 添加图片部分（保持图片引用在消息中）
-                message_content.extend(image_parts)
-
-                # 只有在有内容时才添加消息
-                if message_content:
-                    messages.append({
-                        "role": role,
-                        "content": message_content  # ✅ 多模态内容数组
-                    })
-        
         # 确定请求的模型特性
-        # Extract last user message text for signing (提取最后一条用户消息的文本用于签名)
         last_user_text = _extract_last_user_text(raw_messages)
         requested_model = request.model
         is_thinking_model = "-thinking" in requested_model.casefold()
@@ -1108,156 +1282,238 @@ class UpstreamClient:
         if web_search is None:
             web_search = is_search_model or is_advanced_search
 
-        # 获取上游模型ID
         upstream_model_id = self.model_mapping.get(requested_model, "0727-360B-API")
-
-        message_id = generate_uuid()
-        session_id = generate_uuid()
         tools = request.tools if settings.TOOL_SUPPORT and request.tools else None
         tool_choice = getattr(request, "tool_choice", None)
+        use_persisted_chat = self._requires_persisted_chat(upstream_model_id)
 
-        # 构建MCP服务器列表
         mcp_servers = []
         if is_advanced_search:
             mcp_servers.append("advanced-search")
             self.logger.info("🔍 检测到高级搜索模型，添加 advanced-search MCP 服务器")
 
-        # 构建上游请求体
-        body = {
-            "stream": True,  # 总是使用流式
-            "model": upstream_model_id,
-            "messages": messages,
-            "signature_prompt": last_user_text,  # 用于签名的最后一条用户消息
-            "files": files,  # 图片文件数组
-            "params": {},
-            "extra": {},
-            "features": {
-                "image_generation": False,
-                "web_search": web_search,
-                "auto_web_search": web_search,
-                "preview_mode": True,
-                "flags": [],
-                "features": [
-                    {
-                        "type": "mcp",
-                        "server": "vibe-coding",
-                        "status": "hidden"
-                    },
-                    {
-                        "type": "mcp",
-                        "server": "ppt-maker",
-                        "status": "hidden"
-                    },
-                    {
-                        "type": "mcp",
-                        "server": "image-search",
-                        "status": "hidden"
-                    },
-                    {
-                        "type": "mcp",
-                        "server": "deep-research",
-                        "status": "hidden"
-                    },
-                    {
-                        "type": "tool_selector",
-                        "server": "tool_selector",
-                        "status": "hidden"
-                    },
-                    {
-                        "type": "mcp",
-                        "server": "advanced-search",
-                        "status": "hidden"
-                    }
-                ],
-                "enable_thinking": enable_thinking,
-            },
-            "background_tasks": {
-                "title_generation": False,
-                "tags_generation": False,
-            },
-            "mcp_servers": mcp_servers,
-            "variables": {
-                "{{USER_NAME}}": "Guest",
-                "{{USER_LOCATION}}": "Unknown",
-                "{{CURRENT_DATETIME}}": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "{{CURRENT_DATE}}": datetime.now().strftime("%Y-%m-%d"),
-                "{{CURRENT_TIME}}": datetime.now().strftime("%H:%M:%S"),
-                "{{CURRENT_WEEKDAY}}": datetime.now().strftime("%A"),
-                "{{CURRENT_TIMEZONE}}": "Asia/Shanghai",
-                "{{USER_LANGUAGE}}": "zh-CN",
-            },
-            "model_item": {
-                "id": upstream_model_id,
-                "name": requested_model,
-                "owned_by": settings.SERVICE_NAME
-            },
-            "chat_id": chat_id,
-            "id": message_id,
-            "session_id": session_id,
-            "current_user_message_id": message_id,
-            "current_user_message_parent_id": None,
-        }
-
-        if tools:
-            body["tools"] = tools
-            if tool_choice is not None:
-                body["tool_choice"] = tool_choice
-            self.logger.info(f"🔧 工具调用将直接透传到上游: {len(tools)} 个工具")
-        else:
-            body["tools"] = None
-        
-        # 处理其他参数
-        if request.temperature is not None:
-            body["params"]["temperature"] = request.temperature
-        if request.max_tokens is not None:
-            body["params"]["max_tokens"] = request.max_tokens
-        
-        # Dual-layer HMAC signing metadata and header
-        timestamp_ms = int(time.time() * 1000)
-        request_id = generate_uuid()
-        fe_version = get_latest_fe_version()
-        try:
-            signing_metadata = f"requestId,{request_id},timestamp,{timestamp_ms},user_id,{user_id}"
-            prompt_for_signature = last_user_text or ""
-            signature_result = generate_signature(
-                e=signing_metadata,
-                t=prompt_for_signature,
-                s=timestamp_ms,
+        headers = get_dynamic_headers(
+            browser_type="chrome" if use_persisted_chat else None,
+        )
+        chat_id = generate_uuid()
+        if use_persisted_chat:
+            chat_id = await self._create_upstream_chat(
+                prompt=last_user_text,
+                model=upstream_model_id,
+                token=token,
+                headers=headers,
+                enable_thinking=enable_thinking,
+                web_search=web_search,
             )
-            signature = signature_result["signature"]
-            logger.debug(f"[上游] 生成签名成功: {signature[:16]}... (user_id={user_id}, request_id={request_id})")
+            self.logger.info(f"🧩 已为 {requested_model} 创建上游 chat: {chat_id}")
+        headers["Referer"] = f"{self.base_url}/c/{chat_id}"
+
+        # 处理消息格式 - 上游使用单独的 files 字段传递图片
+        messages = []
+        files = []
+
+        for msg in normalized_messages:
+            role = str(msg.get("role", "user"))
+            content = msg.get("content")
+
+            if isinstance(content, str):
+                messages.append({"role": role, "content": content})
+                continue
+
+            if not isinstance(content, list):
+                continue
+
+            text_parts = []
+            image_parts = []
+            for part in content:
+                image_url = None
+                if hasattr(part, "type"):
+                    if part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text or "")
+                    elif part.type == "image_url" and hasattr(part, "image_url"):
+                        if hasattr(part.image_url, "url"):
+                            image_url = part.image_url.url
+                        elif (
+                            isinstance(part.image_url, dict)
+                            and "url" in part.image_url
+                        ):
+                            image_url = part.image_url["url"]
+                elif isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        image_url = part.get("image_url", {}).get("url", "")
+                elif isinstance(part, str):
+                    text_parts.append(part)
+
+                if not image_url:
+                    continue
+
+                self.logger.debug(f"✅ 检测到图片: {image_url[:50]}...")
+                if image_url.startswith("data:") and auth_mode != "guest":
+                    self.logger.info("🔄 上传 base64 图片到上游服务")
+                    file_info = await self.upload_image(
+                        image_url,
+                        chat_id,
+                        token,
+                        user_id,
+                        auth_mode=auth_mode,
+                    )
+                    if not file_info:
+                        self.logger.warning("⚠️ 图片上传失败")
+                        text_parts.append("[系统提示: 图片上传失败]")
+                        continue
+
+                    files.append(file_info)
+                    self.logger.info("✅ 图片已添加到 files 数组")
+                    image_ref = f"{file_info['id']}_{file_info['name']}"
+                    image_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_ref},
+                        }
+                    )
+                    self.logger.debug(f"📎 图片引用: {image_ref}")
+                    continue
+
+                if auth_mode != "guest":
+                    self.logger.warning("⚠️ 非 base64 图片或匿名模式，保留原始URL")
+                image_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url},
+                    }
+                )
+
+            message_content = []
+            combined_text = " ".join(text_parts).strip()
+            if combined_text:
+                message_content.append({"type": "text", "text": combined_text})
+            message_content.extend(image_parts)
+            if message_content:
+                messages.append({"role": role, "content": message_content})
+
+        if use_persisted_chat:
+            body = self._build_glm47_completion_body(
+                model=upstream_model_id,
+                messages=messages,
+                prompt=last_user_text,
+                chat_id=chat_id,
+                enable_thinking=enable_thinking,
+                web_search=web_search,
+                files=files,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                mcp_servers=mcp_servers,
+            )
+        else:
+            message_id = generate_uuid()
+            session_id = generate_uuid()
+            body = {
+                "stream": True,
+                "model": upstream_model_id,
+                "messages": messages,
+                "signature_prompt": last_user_text,
+                "files": files,
+                "params": {},
+                "extra": {},
+                "features": {
+                    "image_generation": False,
+                    "web_search": web_search,
+                    "auto_web_search": web_search,
+                    "preview_mode": True,
+                    "flags": [],
+                    "features": [
+                        {"type": "mcp", "server": "vibe-coding", "status": "hidden"},
+                        {"type": "mcp", "server": "ppt-maker", "status": "hidden"},
+                        {"type": "mcp", "server": "image-search", "status": "hidden"},
+                        {"type": "mcp", "server": "deep-research", "status": "hidden"},
+                        {
+                            "type": "tool_selector",
+                            "server": "tool_selector",
+                            "status": "hidden",
+                        },
+                        {
+                            "type": "mcp",
+                            "server": "advanced-search",
+                            "status": "hidden",
+                        },
+                    ],
+                    "enable_thinking": enable_thinking,
+                },
+                "background_tasks": {
+                    "title_generation": False,
+                    "tags_generation": False,
+                },
+                "mcp_servers": mcp_servers,
+                "variables": self._build_request_variables(),
+                "model_item": {
+                    "id": upstream_model_id,
+                    "name": requested_model,
+                    "owned_by": settings.SERVICE_NAME,
+                },
+                "chat_id": chat_id,
+                "id": message_id,
+                "session_id": session_id,
+                "current_user_message_id": message_id,
+                "current_user_message_parent_id": None,
+            }
+            if tools:
+                body["tools"] = tools
+                if tool_choice is not None:
+                    body["tool_choice"] = tool_choice
+                self.logger.info(f"🔧 工具调用将直接透传到上游: {len(tools)} 个工具")
+            else:
+                body["tools"] = None
+            if request.temperature is not None:
+                body["params"]["temperature"] = request.temperature
+            if request.max_tokens is not None:
+                body["params"]["max_tokens"] = request.max_tokens
+
+        try:
+            signed_url, signature, timestamp_ms = self._build_signed_completion_request(
+                prompt=last_user_text,
+                chat_id=chat_id,
+                token=token,
+                user_id=user_id,
+                user_agent=headers["User-Agent"],
+                use_browser_fingerprint=use_persisted_chat,
+            )
+            logger.debug(
+                "[上游] 生成签名成功: %s... (user_id=%s, timestamp=%s)",
+                signature[:16],
+                user_id,
+                timestamp_ms,
+            )
         except Exception as e:
             logger.error(f"[上游] 签名生成失败: {e}")
             signature = ""
+            timestamp_ms = "0"
+            signed_url = self.api_endpoint
 
-        # 构建请求头
-        headers = get_dynamic_headers(chat_id)
+        fe_version = headers.get("X-FE-Version") or get_latest_fe_version()
         headers.update(
             {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "*/*" if use_persisted_chat else "application/json",
                 "X-FE-Version": fe_version,
                 "X-Signature": signature,
             }
         )
 
-        query_params = {
-            "timestamp": str(timestamp_ms),
-            "requestId": request_id,
-            "user_id": user_id,
-            "token": token,
-            "version": "0.0.1",
-            "platform": "web",
-            "current_url": f"https://chat.z.ai/c/{chat_id}",
-            "pathname": f"/c/{chat_id}",
-            "signature_timestamp": str(timestamp_ms),
-        }
-        signed_url = f"{self.api_endpoint}?{urlencode(query_params)}"
-
-        # 记录请求详情用于调试
-        logger.debug(f"[上游] 请求头: Authorization=Bearer *****, X-Signature={signature[:16] if signature else '(空)'}...")
-        logger.debug(f"[上游] URL 参数: timestamp={timestamp_ms}, requestId={request_id}, user_id={user_id}")
+        logger.debug(
+            "[上游] 请求头: Authorization=Bearer *****, X-Signature=%s...",
+            signature[:16] if signature else "(空)",
+        )
+        logger.debug(
+            "[上游] URL 参数: timestamp=%s, user_id=%s, persisted_chat=%s",
+            timestamp_ms,
+            user_id,
+            use_persisted_chat,
+        )
         
         # 存储当前token用于错误处理
         self._current_token = token
