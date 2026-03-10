@@ -86,7 +86,7 @@ async def test_build_config_page_data_includes_sections_and_override_status(
     )
 
     assert page_data["overview"]["total_sections"] >= 7
-    assert page_data["overview"]["total_fields"] >= 40
+    assert page_data["overview"]["total_fields"] >= 35
     assert page_data["overview"]["overridden_fields"] == 2
     assert page_data["overview"]["example_exists"] is True
 

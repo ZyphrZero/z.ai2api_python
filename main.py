@@ -26,7 +26,9 @@ async def warmup_upstream_client():
     """可选预热上游适配器，提前初始化动态依赖。"""
     try:
         client = UpstreamClient()
-        logger.info(f"✅ 上游适配器已就绪，支持 {len(client.get_supported_models())} 个模型")
+        logger.info(
+            f"✅ 上游适配器已就绪，支持 {len(client.get_supported_models())} 个模型"
+        )
     except Exception as exc:
         logger.warning(f"⚠️ 上游适配器预热失败: {exc}")
 
@@ -45,7 +47,10 @@ async def lifespan(app: FastAPI):
     await init_token_database()
     init_request_log_dao()
 
-    if settings.TOKEN_AUTO_IMPORT_ENABLED and settings.TOKEN_AUTO_IMPORT_SOURCE_DIR.strip():
+    if (
+        settings.TOKEN_AUTO_IMPORT_ENABLED
+        and settings.TOKEN_AUTO_IMPORT_SOURCE_DIR.strip()
+    ):
         try:
             await run_directory_import(
                 settings.TOKEN_AUTO_IMPORT_SOURCE_DIR,
@@ -57,22 +62,23 @@ async def lifespan(app: FastAPI):
 
     # 从数据库初始化认证 token 池
     from app.utils.token_pool import initialize_token_pool_from_db
+
     token_pool = await initialize_token_pool_from_db(
         provider="zai",
         failure_threshold=settings.TOKEN_FAILURE_THRESHOLD,
-        recovery_timeout=settings.TOKEN_RECOVERY_TIMEOUT
+        recovery_timeout=settings.TOKEN_RECOVERY_TIMEOUT,
     )
 
     if not token_pool and not settings.ANONYMOUS_MODE:
-        logger.warning("⚠️ 未找到可用 Token 且未启用匿名模式，服务可能无法正常工作")
+        logger.warning(
+            "⚠️ 未找到可用 Token 且未启用匿名模式，服务可能无法正常工作"
+        )
 
     if settings.ANONYMOUS_MODE:
         from app.utils.guest_session_pool import initialize_guest_session_pool
 
         guest_pool = await initialize_guest_session_pool(
             pool_size=settings.GUEST_POOL_SIZE,
-            session_max_age=settings.GUEST_SESSION_MAX_AGE,
-            maintenance_interval=settings.GUEST_POOL_MAINTENANCE_INTERVAL,
         )
         guest_status = guest_pool.get_pool_status()
         logger.info(
@@ -154,7 +160,7 @@ def run_server():
             port=settings.LISTEN_PORT,
             reload=True,  # 生产环境请关闭热重载
             process_name=service_name,  # 设置进程名称
-            **RELOAD_CONFIG,    # 热重载配置
+            **RELOAD_CONFIG,  # 热重载配置
         ).serve()
     except KeyboardInterrupt:
         logger.info("🛑 收到中断信号，正在关闭服务...")

@@ -56,6 +56,7 @@ docker compose -f deploy/docker-compose.yml up -d --build
 | `ADMIN_PASSWORD` | 管理后台登录密码，默认值必须修改 |
 | `LISTEN_PORT` | 服务监听端口，默认 `8080` |
 | `ANONYMOUS_MODE` | 是否启用匿名模式 |
+| `GUEST_POOL_SIZE` | 匿名池容量 |
 | `DB_PATH` | SQLite 数据库路径 |
 | `TOKEN_FAILURE_THRESHOLD` | Token 连续失败阈值 |
 | `TOKEN_RECOVERY_TIMEOUT` | Token 恢复等待时间 |
