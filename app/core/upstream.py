@@ -51,7 +51,25 @@ DEFAULT_COLOR_DEPTH = "24"
 DEFAULT_PIXEL_RATIO = "1.25"
 DEFAULT_MAX_TOUCH_POINTS = "10"
 DEFAULT_TIMEZONE_OFFSET = "-480"
-DEFAULT_PAGE_TITLE = "Z.ai - Free AI Chatbot & Agent powered by GLM-5 & GLM-4.7"
+DEFAULT_PAGE_TITLE = "Z.ai Chat Proxy"
+DEFAULT_COMPLETION_FEATURES = [
+    {"type": "mcp", "server": "vibe-coding", "status": "hidden"},
+    {"type": "mcp", "server": "ppt-maker", "status": "hidden"},
+    {"type": "mcp", "server": "image-search", "status": "hidden"},
+    {"type": "mcp", "server": "deep-research", "status": "hidden"},
+    {"type": "tool_selector", "server": "tool_selector", "status": "hidden"},
+    {"type": "mcp", "server": "advanced-search", "status": "hidden"},
+]
+GLM46V_MCP_SERVERS = [
+    "vlm-image-search",
+    "vlm-image-recognition",
+    "vlm-image-processing",
+]
+GLM46V_SELECTED_FEATURES = [
+    {"type": "mcp", "server": "vlm-image-search", "status": "selected"},
+    {"type": "mcp", "server": "vlm-image-recognition", "status": "selected"},
+    {"type": "mcp", "server": "vlm-image-processing", "status": "selected"},
+]
 
 def generate_uuid() -> str:
     """生成UUID v4"""
@@ -594,8 +612,29 @@ class UpstreamClient:
         ]
 
     def _requires_persisted_chat(self, upstream_model_id: str) -> bool:
-        """GLM-4.7 系列需要先在上游创建真实 chat 会话。"""
-        return upstream_model_id == "glm-4.7"
+        """需要挂载真实 chat 会话的上游模型。"""
+        return bool(
+            self._get_model_request_profile(upstream_model_id)["use_persisted_chat"]
+        )
+
+    def _get_model_request_profile(self, upstream_model_id: str) -> Dict[str, Any]:
+        """返回模型专属的请求配置。"""
+        if upstream_model_id == "glm-4.6v":
+            return {
+                "use_persisted_chat": True,
+                "preview_mode": False,
+                "mcp_servers": list(GLM46V_MCP_SERVERS),
+                "feature_entries": [dict(item) for item in GLM46V_SELECTED_FEATURES],
+                "default_enable_thinking": True,
+            }
+
+        return {
+            "use_persisted_chat": upstream_model_id == "glm-4.7",
+            "preview_mode": True,
+            "mcp_servers": [],
+            "feature_entries": [],
+            "default_enable_thinking": None,
+        }
 
     def _build_request_variables(self) -> Dict[str, str]:
         """构建上游请求需要的运行时变量。"""
@@ -734,14 +773,29 @@ class UpstreamClient:
         headers: Dict[str, str],
         enable_thinking: bool,
         web_search: bool,
+        user_message_id: Optional[str] = None,
+        files: Optional[List[Dict[str, Any]]] = None,
+        feature_entries: Optional[List[Dict[str, Any]]] = None,
+        mcp_servers: Optional[List[str]] = None,
     ) -> str:
         """为 GLM-4.7 系列创建上游真实 chat 会话。"""
         init_content = prompt[:CHAT_BOOTSTRAP_MAX_CONTENT_LEN]
         if len(prompt) > CHAT_BOOTSTRAP_MAX_CONTENT_LEN:
             init_content = init_content + "..."
 
-        message_id = generate_uuid()
+        message_id = user_message_id or generate_uuid()
         timestamp_seconds = int(time.time())
+        chat_features = (
+            [dict(item) for item in feature_entries]
+            if feature_entries
+            else [
+                {
+                    "type": "tool_selector",
+                    "server": "tool_selector_h",
+                    "status": "hidden",
+                }
+            ]
+        )
         body = {
             "chat": {
                 "id": "",
@@ -756,6 +810,7 @@ class UpstreamClient:
                             "childrenIds": [],
                             "role": "user",
                             "content": init_content,
+                            **({"files": [dict(item) for item in files]} if files else {}),
                             "timestamp": timestamp_seconds,
                             "models": [model],
                         }
@@ -764,14 +819,8 @@ class UpstreamClient:
                 },
                 "tags": [],
                 "flags": [],
-                "features": [
-                    {
-                        "type": "tool_selector",
-                        "server": "tool_selector_h",
-                        "status": "hidden",
-                    }
-                ],
-                "mcp_servers": [],
+                "features": chat_features,
+                "mcp_servers": list(mcp_servers or []),
                 "enable_thinking": enable_thinking,
                 "auto_web_search": web_search,
                 "message_version": 1,
@@ -827,8 +876,13 @@ class UpstreamClient:
         temperature: Optional[float],
         max_tokens: Optional[int],
         mcp_servers: List[str],
+        preview_mode: bool,
+        feature_entries: Optional[List[Dict[str, Any]]],
+        message_id: str,
+        current_user_message_id: str,
+        current_user_message_parent_id: Optional[str],
     ) -> Dict[str, Any]:
-        """构建兼容 GLM-4.7 的精简 completions 请求体。"""
+        """构建兼容持久化 chat 模型的精简 completions 请求体。"""
         params: Dict[str, Any] = {}
         if temperature is not None:
             params["temperature"] = temperature
@@ -846,15 +900,15 @@ class UpstreamClient:
                 "image_generation": False,
                 "web_search": web_search,
                 "auto_web_search": web_search,
-                "preview_mode": True,
+                "preview_mode": preview_mode,
                 "flags": [],
                 "enable_thinking": enable_thinking,
             },
             "variables": self._build_request_variables(),
             "chat_id": chat_id,
-            "id": generate_uuid(),
-            "current_user_message_id": generate_uuid(),
-            "current_user_message_parent_id": None,
+            "id": message_id,
+            "current_user_message_id": current_user_message_id,
+            "current_user_message_parent_id": current_user_message_parent_id,
             "background_tasks": {
                 "title_generation": True,
                 "tags_generation": True,
@@ -1172,7 +1226,9 @@ class UpstreamClient:
                 "Connection": "keep-alive",
                 "Origin": f"{self.base_url}",
                 "Pragma": "no-cache",
-                "Referer": f"{self.base_url}/c/{chat_id}",
+                "Referer": (
+                    f"{self.base_url}/c/{chat_id}" if chat_id else f"{self.base_url}/"
+                ),
                 "Sec-Ch-Ua": '"Microsoft Edge";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
                 "Sec-Ch-Ua-Mobile": "?0",
                 "Sec-Ch-Ua-Platform": '"Windows"',
@@ -1274,21 +1330,31 @@ class UpstreamClient:
         is_thinking_model = "-thinking" in requested_model.casefold()
         is_search_model = "-search" in requested_model.casefold()
         is_advanced_search = requested_model == settings.GLM47_ADVANCED_SEARCH_MODEL
+        upstream_model_id = self.model_mapping.get(requested_model, "0727-360B-API")
+        tools = request.tools if settings.TOOL_SUPPORT and request.tools else None
+        tool_choice = getattr(request, "tool_choice", None)
+        model_profile = self._get_model_request_profile(upstream_model_id)
         enable_thinking = request.enable_thinking
         if enable_thinking is None:
-            enable_thinking = is_thinking_model
+            default_enable_thinking = model_profile["default_enable_thinking"]
+            enable_thinking = (
+                default_enable_thinking
+                if default_enable_thinking is not None
+                else is_thinking_model
+            )
 
         web_search = request.web_search
         if web_search is None:
             web_search = is_search_model or is_advanced_search
 
-        upstream_model_id = self.model_mapping.get(requested_model, "0727-360B-API")
-        tools = request.tools if settings.TOOL_SUPPORT and request.tools else None
-        tool_choice = getattr(request, "tool_choice", None)
-        use_persisted_chat = self._requires_persisted_chat(upstream_model_id)
+        use_persisted_chat = bool(model_profile["use_persisted_chat"])
+        preview_mode = bool(model_profile["preview_mode"])
+        feature_entries = list(model_profile["feature_entries"])
+        persisted_user_message_id = generate_uuid() if use_persisted_chat else None
+        persisted_assistant_message_id = generate_uuid() if use_persisted_chat else None
 
-        mcp_servers = []
-        if is_advanced_search:
+        mcp_servers = list(model_profile["mcp_servers"])
+        if is_advanced_search and "advanced-search" not in mcp_servers:
             mcp_servers.append("advanced-search")
             self.logger.info("🔍 检测到高级搜索模型，添加 advanced-search MCP 服务器")
 
@@ -1296,21 +1362,11 @@ class UpstreamClient:
             browser_type="chrome" if use_persisted_chat else None,
         )
         chat_id = generate_uuid()
-        if use_persisted_chat:
-            chat_id = await self._create_upstream_chat(
-                prompt=last_user_text,
-                model=upstream_model_id,
-                token=token,
-                headers=headers,
-                enable_thinking=enable_thinking,
-                web_search=web_search,
-            )
-            self.logger.info(f"🧩 已为 {requested_model} 创建上游 chat: {chat_id}")
-        headers["Referer"] = f"{self.base_url}/c/{chat_id}"
 
         # 处理消息格式 - 上游使用单独的 files 字段传递图片
         messages = []
         files = []
+        upload_chat_id = "" if use_persisted_chat else chat_id
 
         for msg in normalized_messages:
             role = str(msg.get("role", "user"))
@@ -1354,7 +1410,7 @@ class UpstreamClient:
                     self.logger.info("🔄 上传 base64 图片到上游服务")
                     file_info = await self.upload_image(
                         image_url,
-                        chat_id,
+                        upload_chat_id,
                         token,
                         user_id,
                         auth_mode=auth_mode,
@@ -1366,7 +1422,9 @@ class UpstreamClient:
 
                     files.append(file_info)
                     self.logger.info("✅ 图片已添加到 files 数组")
-                    image_ref = f"{file_info['id']}_{file_info['name']}"
+                    if persisted_user_message_id:
+                        file_info["ref_user_msg_id"] = persisted_user_message_id
+                    image_ref = str(file_info["id"])
                     image_parts.append(
                         {
                             "type": "image_url",
@@ -1394,6 +1452,22 @@ class UpstreamClient:
                 messages.append({"role": role, "content": message_content})
 
         if use_persisted_chat:
+            chat_id = await self._create_upstream_chat(
+                prompt=last_user_text,
+                model=upstream_model_id,
+                token=token,
+                headers=headers,
+                enable_thinking=enable_thinking,
+                web_search=web_search,
+                user_message_id=persisted_user_message_id,
+                files=files or None,
+                feature_entries=feature_entries or None,
+                mcp_servers=mcp_servers or None,
+            )
+            self.logger.info(f"🧩 已为 {requested_model} 创建上游 chat: {chat_id}")
+        headers["Referer"] = f"{self.base_url}/c/{chat_id}"
+
+        if use_persisted_chat:
             body = self._build_glm47_completion_body(
                 model=upstream_model_id,
                 messages=messages,
@@ -1407,6 +1481,11 @@ class UpstreamClient:
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 mcp_servers=mcp_servers,
+                preview_mode=preview_mode,
+                feature_entries=feature_entries or None,
+                message_id=persisted_assistant_message_id or generate_uuid(),
+                current_user_message_id=persisted_user_message_id or generate_uuid(),
+                current_user_message_parent_id=None,
             )
         else:
             message_id = generate_uuid()
@@ -1423,23 +1502,11 @@ class UpstreamClient:
                     "image_generation": False,
                     "web_search": web_search,
                     "auto_web_search": web_search,
-                    "preview_mode": True,
+                    "preview_mode": preview_mode,
                     "flags": [],
                     "features": [
-                        {"type": "mcp", "server": "vibe-coding", "status": "hidden"},
-                        {"type": "mcp", "server": "ppt-maker", "status": "hidden"},
-                        {"type": "mcp", "server": "image-search", "status": "hidden"},
-                        {"type": "mcp", "server": "deep-research", "status": "hidden"},
-                        {
-                            "type": "tool_selector",
-                            "server": "tool_selector",
-                            "status": "hidden",
-                        },
-                        {
-                            "type": "mcp",
-                            "server": "advanced-search",
-                            "status": "hidden",
-                        },
+                        dict(item)
+                        for item in (feature_entries or DEFAULT_COMPLETION_FEATURES)
                     ],
                     "enable_thinking": enable_thinking,
                 },
