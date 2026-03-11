@@ -4,7 +4,7 @@
 import os
 from typing import Optional
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -86,9 +86,10 @@ class Settings(BaseSettings):
     )
     DB_PATH: str = os.getenv("DB_PATH", "tokens.db")
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # 忽略额外字段，防止环境变量中的未知字段导致验证错误
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",  # 忽略额外字段，防止环境变量中的未知字段导致验证错误
+    )
 
 
 settings = Settings()
