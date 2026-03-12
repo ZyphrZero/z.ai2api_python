@@ -219,6 +219,67 @@ async def test_non_glm47_request_keeps_legacy_request_shape(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_glm5_defaults_to_enable_thinking(monkeypatch):
+    def fake_headers(chat_id: str = "", browser_type=None):
+        headers = dict(FAKE_HEADERS)
+        headers["Referer"] = (
+            f"https://chat.z.ai/c/{chat_id}"
+            if chat_id
+            else FAKE_HEADERS["Referer"]
+        )
+        return headers
+
+    async def fail_create_chat(self, **kwargs):
+        raise AssertionError("GLM-5 不应触发 create_chat")
+
+    monkeypatch.setattr(UpstreamClient, "get_auth_info", _fake_get_auth_info)
+    monkeypatch.setattr(UpstreamClient, "_create_upstream_chat", fail_create_chat)
+    monkeypatch.setattr(upstream_module, "get_dynamic_headers", fake_headers)
+
+    client = UpstreamClient()
+    transformed = await client.transform_request(_make_request("GLM-5"))
+    query = parse_qs(urlparse(transformed["url"]).query)
+
+    assert transformed["headers"]["Accept"] == "application/json"
+    assert transformed["body"]["model"] == "glm-5"
+    assert transformed["body"]["features"]["enable_thinking"] is True
+    assert transformed["body"]["features"]["preview_mode"] is True
+    assert "session_id" in transformed["body"]
+    assert "user_agent" not in query
+
+
+@pytest.mark.asyncio
+async def test_glm5_allows_explicitly_disabling_thinking(monkeypatch):
+    def fake_headers(chat_id: str = "", browser_type=None):
+        headers = dict(FAKE_HEADERS)
+        headers["Referer"] = (
+            f"https://chat.z.ai/c/{chat_id}"
+            if chat_id
+            else FAKE_HEADERS["Referer"]
+        )
+        return headers
+
+    async def fail_create_chat(self, **kwargs):
+        raise AssertionError("GLM-5 不应触发 create_chat")
+
+    monkeypatch.setattr(UpstreamClient, "get_auth_info", _fake_get_auth_info)
+    monkeypatch.setattr(UpstreamClient, "_create_upstream_chat", fail_create_chat)
+    monkeypatch.setattr(upstream_module, "get_dynamic_headers", fake_headers)
+
+    client = UpstreamClient()
+    request = OpenAIRequest(
+        model="GLM-5",
+        messages=[Message(role="user", content="请用一句话回答：你好")],
+        stream=False,
+        enable_thinking=False,
+    )
+
+    transformed = await client.transform_request(request)
+
+    assert transformed["body"]["features"]["enable_thinking"] is False
+
+
+@pytest.mark.asyncio
 async def test_glm46v_uses_persisted_chat_and_visual_features(monkeypatch):
     create_chat_calls: list[dict] = []
     upload_calls: list[dict] = []
@@ -340,7 +401,10 @@ async def test_glm46v_uses_persisted_chat_and_visual_features(monkeypatch):
     assert create_chat_calls[0]["user_agent"] == FAKE_HEADERS["User-Agent"]
     assert create_chat_calls[0]["enable_thinking"] is True
     assert create_chat_calls[0]["web_search"] is False
-    assert create_chat_calls[0]["feature_entries"] == upstream_module.GLM46V_SELECTED_FEATURES
+    assert (
+        create_chat_calls[0]["feature_entries"]
+        == upstream_module.GLM46V_SELECTED_FEATURES
+    )
     assert create_chat_calls[0]["mcp_servers"] == upstream_module.GLM46V_MCP_SERVERS
     assert create_chat_calls[0]["user_message_id"]
     assert create_chat_calls[0]["files"][0]["id"] == "file-id"
