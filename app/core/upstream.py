@@ -628,6 +628,15 @@ class UpstreamClient:
                 "default_enable_thinking": True,
             }
 
+        if upstream_model_id == "glm-5":
+            return {
+                "use_persisted_chat": False,
+                "preview_mode": True,
+                "mcp_servers": [],
+                "feature_entries": [],
+                "default_enable_thinking": True,
+            }
+
         return {
             "use_persisted_chat": upstream_model_id == "glm-4.7",
             "preview_mode": True,
