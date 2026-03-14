@@ -3,7 +3,7 @@
 基于 FastAPI + Granian 的 GLM 代理服务
 适合本地开发、自托管代理、Token 池管理和兼容客户端接入
 
-[English Version](english/README.md)
+[English Version](README_EN.md)
 
 ## 特性
 
