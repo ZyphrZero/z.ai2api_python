@@ -3,6 +3,8 @@
 GLM proxy service based on FastAPI + Granian
 Suitable for local development, self-hosted proxy, Token pool management, and compatible client access
 
+English / [中文简体](README.md)
+
 ## Features
 
 - Compatible with `OpenAI`, `Claude Code`, `Anthropic` style requests
