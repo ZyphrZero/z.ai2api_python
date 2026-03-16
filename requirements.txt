@@ -1,6 +1,6 @@
 fastapi==0.116.1
 granian[reload,pname]==2.5.2
-httpx[http2]==0.28.1
+httpx[http2,socks]==0.28.1
 pydantic==2.11.7
 pydantic-settings==2.10.1
 pydantic-core==2.33.2
